@@ -33,9 +33,7 @@ contract BlockchainInfo {
     /**
      * @notice Returns the current balance of the given address
      */
-    function getBalance(
-        address wallet
-    ) public view returns (uint256) {
+    function getBalance(address wallet) public view returns (uint256) {
         return wallet.balance;
     }
 }

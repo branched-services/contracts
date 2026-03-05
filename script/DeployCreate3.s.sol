@@ -109,11 +109,10 @@ contract DeployCreate3 is Script {
     /// @param contractName The name for logging
     /// @return deployed The deployed address
     /// @return wasDeployed True if newly deployed
-    function deployIfNeeded(
-        bytes32 salt,
-        bytes memory creationCode,
-        string memory contractName
-    ) internal returns (address deployed, bool wasDeployed) {
+    function deployIfNeeded(bytes32 salt, bytes memory creationCode, string memory contractName)
+        internal
+        returns (address deployed, bool wasDeployed)
+    {
         deployed = ICREATE3Factory(CREATE3_FACTORY).getDeployed(msg.sender, salt);
 
         if (isDeployed(deployed)) {
@@ -129,10 +128,7 @@ contract DeployCreate3 is Script {
     /// @notice Main deployment function
     function run() public returns (DeploymentResult memory result) {
         // Verify CREATE3 factory exists
-        require(
-            isDeployed(CREATE3_FACTORY),
-            "CREATE3 factory not found. See docs/evm-deployment.md#factory-deployment"
-        );
+        require(isDeployed(CREATE3_FACTORY), "CREATE3 factory not found. See docs/evm-deployment.md#factory-deployment");
 
         uint256 chainId = block.chainid;
         address deployer = msg.sender;
@@ -159,15 +155,9 @@ contract DeployCreate3 is Script {
         address predictedProxy = ICREATE3Factory(CREATE3_FACTORY).getDeployed(deployer, getSalt(EXECUTION_PROXY));
         bool proxyAlreadyDeployed = isDeployed(predictedProxy);
 
-        bytes memory executionProxyCode = abi.encodePacked(
-            type(ExecutionProxy).creationCode,
-            abi.encode(owner)
-        );
-        (result.executionProxy, result.deployed[0]) = deployIfNeeded(
-            getSalt(EXECUTION_PROXY),
-            executionProxyCode,
-            EXECUTION_PROXY
-        );
+        bytes memory executionProxyCode = abi.encodePacked(type(ExecutionProxy).creationCode, abi.encode(owner));
+        (result.executionProxy, result.deployed[0]) =
+            deployIfNeeded(getSalt(EXECUTION_PROXY), executionProxyCode, EXECUTION_PROXY);
 
         // If proxy was already deployed and current owner is not target owner, transfer ownership
         if (proxyAlreadyDeployed && owner != deployer) {
@@ -185,35 +175,18 @@ contract DeployCreate3 is Script {
         }
 
         // Deploy stateless helpers (no constructor args)
-        (result.tupler, result.deployed[1]) = deployIfNeeded(
-            getSalt(TUPLER),
-            type(Tupler).creationCode,
-            TUPLER
-        );
+        (result.tupler, result.deployed[1]) = deployIfNeeded(getSalt(TUPLER), type(Tupler).creationCode, TUPLER);
 
-        (result.integer, result.deployed[2]) = deployIfNeeded(
-            getSalt(INTEGER),
-            type(Integer).creationCode,
-            INTEGER
-        );
+        (result.integer, result.deployed[2]) = deployIfNeeded(getSalt(INTEGER), type(Integer).creationCode, INTEGER);
 
-        (result.bytes32Helper, result.deployed[3]) = deployIfNeeded(
-            getSalt(BYTES32),
-            type(Bytes32).creationCode,
-            BYTES32
-        );
+        (result.bytes32Helper, result.deployed[3]) =
+            deployIfNeeded(getSalt(BYTES32), type(Bytes32).creationCode, BYTES32);
 
-        (result.blockchainInfo, result.deployed[4]) = deployIfNeeded(
-            getSalt(BLOCKCHAIN_INFO),
-            type(BlockchainInfo).creationCode,
-            BLOCKCHAIN_INFO
-        );
+        (result.blockchainInfo, result.deployed[4]) =
+            deployIfNeeded(getSalt(BLOCKCHAIN_INFO), type(BlockchainInfo).creationCode, BLOCKCHAIN_INFO);
 
-        (result.arraysConverter, result.deployed[5]) = deployIfNeeded(
-            getSalt(ARRAYS_CONVERTER),
-            type(ArraysConverter).creationCode,
-            ARRAYS_CONVERTER
-        );
+        (result.arraysConverter, result.deployed[5]) =
+            deployIfNeeded(getSalt(ARRAYS_CONVERTER), type(ArraysConverter).creationCode, ARRAYS_CONVERTER);
 
         vm.stopBroadcast();
 
@@ -244,7 +217,13 @@ contract DeployCreate3 is Script {
             console2.log("  (ownership will be transferred to Safe)");
         }
         console2.log("Salt version:", saltVersion);
-        console2.log("CREATE3 Factory:", CREATE3_FACTORY, isDeployed(CREATE3_FACTORY) ? "(deployed)" : "(NOT DEPLOYED - see docs/evm-deployment.md#factory-deployment)");
+        console2.log(
+            "CREATE3 Factory:",
+            CREATE3_FACTORY,
+            isDeployed(CREATE3_FACTORY)
+                ? "(deployed)"
+                : "(NOT DEPLOYED - see docs/evm-deployment.md#factory-deployment)"
+        );
         console2.log("");
 
         address execProxy = predictAddress(deployer, EXECUTION_PROXY);

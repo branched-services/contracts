@@ -23,12 +23,7 @@ contract ExecutionProxy is VM, ReentrancyGuard, Ownable {
     }
 
     /// @notice Emitted when a swap execution completes successfully
-    event Executed(
-        address indexed sender,
-        address indexed receiver,
-        uint256 outputCount,
-        uint256[] actualAmounts
-    );
+    event Executed(address indexed sender, address indexed receiver, uint256 outputCount, uint256[] actualAmounts);
 
     /// @notice Error thrown when output amount is below minimum
     error SlippageExceeded(address token, uint256 actual, uint256 minimum);

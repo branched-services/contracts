@@ -8,9 +8,7 @@ contract Bytes32 {
      * @param val The bytes32 value to be converted.
      * @return The converted uint256 value.
      */
-    function toUint256(
-        bytes32 val
-    ) public pure returns (uint256) {
+    function toUint256(bytes32 val) public pure returns (uint256) {
         return uint256(val);
     }
 }

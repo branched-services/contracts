@@ -15,7 +15,11 @@ interface IMintableERC20 is IERC20 {
 contract MockDEX {
     /// @notice Emitted when a swap occurs
     event Swap(
-        address indexed tokenIn, address indexed tokenOut, address indexed recipient, uint256 amountIn, uint256 amountOut
+        address indexed tokenIn,
+        address indexed tokenOut,
+        address indexed recipient,
+        uint256 amountIn,
+        uint256 amountOut
     );
 
     /// @notice Execute a swap - takes tokenIn, mints tokenOut

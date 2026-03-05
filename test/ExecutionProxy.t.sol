@@ -5,12 +5,7 @@ import { Test } from "forge-std/Test.sol";
 import { ExecutionProxy } from "../src/ExecutionProxy.sol";
 import { WeirollTestHelper } from "./helpers/WeirollTestHelper.sol";
 import { MockDEX } from "./mocks/MockDEX.sol";
-import {
-    FeeOnTransferToken,
-    RebasingToken,
-    CallbackToken,
-    FalseReturningToken
-} from "./mocks/AdversarialTokens.sol";
+import { FeeOnTransferToken, RebasingToken, CallbackToken, FalseReturningToken } from "./mocks/AdversarialTokens.sol";
 import { ReentrantReceiver } from "./mocks/ReentrantReceiver.sol";
 
 /// @title MockERC20
@@ -131,8 +126,7 @@ contract ExecutionProxyTest is Test {
         bytes[] memory state = new bytes[](0);
 
         // Execute with min amount that will pass
-        uint256 actualAmount =
-            proxy.executeSingle(commands, state, address(tokenA), outputAmount - 1, receiver);
+        uint256 actualAmount = proxy.executeSingle(commands, state, address(tokenA), outputAmount - 1, receiver);
 
         assertEq(actualAmount, outputAmount);
         assertEq(tokenA.balanceOf(receiver), outputAmount);
@@ -764,7 +758,9 @@ contract ExecutionProxyTest is Test {
         bytes[] memory state = new bytes[](0);
 
         vm.expectRevert(
-            abi.encodeWithSelector(ExecutionProxy.SlippageExceeded.selector, address(tokenA), balance, type(uint256).max)
+            abi.encodeWithSelector(
+                ExecutionProxy.SlippageExceeded.selector, address(tokenA), balance, type(uint256).max
+            )
         );
         proxy.executeSingle(commands, state, address(tokenA), type(uint256).max, receiver);
     }
@@ -980,7 +976,9 @@ contract ExecutionProxyTest is Test {
 
         // Set minAmount to original amount - should fail
         vm.expectRevert(
-            abi.encodeWithSelector(ExecutionProxy.SlippageExceeded.selector, address(rebaseToken), newBalance, mintAmount)
+            abi.encodeWithSelector(
+                ExecutionProxy.SlippageExceeded.selector, address(rebaseToken), newBalance, mintAmount
+            )
         );
         proxy.executeSingle(commands, state, address(rebaseToken), mintAmount, receiver);
     }
@@ -1040,7 +1038,10 @@ contract ExecutionProxyTest is Test {
         bytes[] memory emptyState = new bytes[](0);
 
         attacker.setupExecuteSingleAttack(
-            emptyCommands, emptyState, proxy.NATIVE_ETH(), 0, // minAmount = 0 to not fail slippage
+            emptyCommands,
+            emptyState,
+            proxy.NATIVE_ETH(),
+            0, // minAmount = 0 to not fail slippage
             address(attacker)
         );
 
