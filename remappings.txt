@@ -1,4 +1,4 @@
-@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/
-@weiroll/=lib/weiroll/contracts/
-forge-std/=lib/forge-std/src/
-solmate/=lib/solmate/src/
+forge-std/=dependencies/forge-std-1.12.0/src/
+@openzeppelin/contracts/=dependencies/@openzeppelin-contracts-5.5.0/contracts/
+@weiroll/=dependencies/weiroll-1.0.0/contracts/
+solmate/=dependencies/solmate-6.8.0/src/

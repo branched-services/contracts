@@ -1,0 +1,23 @@
+[[dependencies]]
+name = "@openzeppelin-contracts"
+version = "5.5.0"
+git = "https://github.com/OpenZeppelin/openzeppelin-contracts.git"
+rev = "fcbae5394ae8ad52d8e580a3477db99814b9d565"
+
+[[dependencies]]
+name = "forge-std"
+version = "1.12.0"
+git = "https://github.com/foundry-rs/forge-std.git"
+rev = "7117c90c8cf6c68e5acce4f09a6b24715cea4de6"
+
+[[dependencies]]
+name = "solmate"
+version = "6.8.0"
+git = "https://github.com/transmissions11/solmate.git"
+rev = "eaa7041378f9a6c12f943de08a6c41b31a9870fc"
+
+[[dependencies]]
+name = "weiroll"
+version = "1.0.0"
+git = "https://github.com/weiroll/weiroll.git"
+rev = "afe6ba63c505bf9f2c630cd1c1dabad0de81c7e2"
