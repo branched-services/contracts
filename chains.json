@@ -1,0 +1,61 @@
+{
+  "chains": {
+    "1": {
+      "name": "ethereum",
+      "displayName": "Ethereum Mainnet",
+      "create3Factory": "0x9fBB3DF7C40Da2e5A0dE984fFE2CCB7C47cd0ABf",
+      "explorer": {
+        "url": "https://etherscan.io",
+        "apiUrl": "https://api.etherscan.io/api",
+        "apiKeyEnv": "ETHERSCAN_API_KEY"
+      },
+      "rpcEnv": "ETH_RPC_URL",
+      "isTestnet": false
+    },
+    "8453": {
+      "name": "base",
+      "displayName": "Base",
+      "create3Factory": "0x9fBB3DF7C40Da2e5A0dE984fFE2CCB7C47cd0ABf",
+      "explorer": {
+        "url": "https://basescan.org",
+        "apiUrl": "https://api.basescan.org/api",
+        "apiKeyEnv": "BASESCAN_API_KEY"
+      },
+      "rpcEnv": "BASE_RPC_URL",
+      "isTestnet": false
+    },
+    "11155111": {
+      "name": "sepolia",
+      "displayName": "Sepolia Testnet",
+      "create3Factory": "0x9fBB3DF7C40Da2e5A0dE984fFE2CCB7C47cd0ABf",
+      "explorer": {
+        "url": "https://sepolia.etherscan.io",
+        "apiUrl": "https://api-sepolia.etherscan.io/api",
+        "apiKeyEnv": "ETHERSCAN_API_KEY"
+      },
+      "rpcEnv": "SEPOLIA_RPC_URL",
+      "isTestnet": true
+    },
+    "84532": {
+      "name": "base-sepolia",
+      "displayName": "Base Sepolia Testnet",
+      "create3Factory": "0x9fBB3DF7C40Da2e5A0dE984fFE2CCB7C47cd0ABf",
+      "explorer": {
+        "url": "https://sepolia.basescan.org",
+        "apiUrl": "https://api-sepolia.basescan.org/api",
+        "apiKeyEnv": "BASESCAN_API_KEY"
+      },
+      "rpcEnv": "BASE_SEPOLIA_RPC_URL",
+      "isTestnet": true
+    }
+  },
+  "contracts": [
+    "ExecutionProxy",
+    "Tupler",
+    "Integer",
+    "Bytes32",
+    "BlockchainInfo",
+    "ArraysConverter"
+  ],
+  "saltPrefix": "infrared.contracts.v1"
+}

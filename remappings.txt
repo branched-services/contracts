@@ -1,0 +1,4 @@
+@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/
+@weiroll/=lib/weiroll/contracts/
+forge-std/=lib/forge-std/src/
+solmate/=lib/solmate/src/

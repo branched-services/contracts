@@ -1,0 +1,15 @@
+# Compiler files
+cache/
+out/
+
+# Broadcast logs
+broadcast/
+
+# Dependencies (managed by soldeer)
+dependencies/
+
+# Dotenv file
+.env
+
+# Node modules
+node_modules/

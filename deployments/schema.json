@@ -1,0 +1,70 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Deployment Registry",
+  "description": "Schema for recording contract deployments per chain",
+  "type": "object",
+  "required": ["chainId", "chainName", "deployedAt", "deployer", "owner", "contracts", "create3Factory"],
+  "properties": {
+    "chainId": {
+      "type": "integer",
+      "description": "The chain ID where contracts are deployed"
+    },
+    "chainName": {
+      "type": "string",
+      "description": "Human-readable chain name"
+    },
+    "deployedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of deployment"
+    },
+    "deployer": {
+      "type": "string",
+      "pattern": "^0x[a-fA-F0-9]{40}$",
+      "description": "Address that deployed the contracts"
+    },
+    "owner": {
+      "type": "string",
+      "pattern": "^0x[a-fA-F0-9]{40}$",
+      "description": "Current owner address (EOA or Safe multi-sig)"
+    },
+    "contracts": {
+      "type": "object",
+      "description": "Map of contract name to deployment info",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["address", "salt", "verified"],
+        "properties": {
+          "address": {
+            "type": "string",
+            "pattern": "^0x[a-fA-F0-9]{40}$",
+            "description": "Deployed contract address"
+          },
+          "salt": {
+            "type": "string",
+            "pattern": "^0x[a-fA-F0-9]{64}$",
+            "description": "CREATE3 salt used for deployment"
+          },
+          "verified": {
+            "type": "boolean",
+            "description": "Whether contract is verified on block explorer"
+          },
+          "txHash": {
+            "type": "string",
+            "pattern": "^0x[a-fA-F0-9]{64}$",
+            "description": "Deployment transaction hash"
+          },
+          "blockNumber": {
+            "type": "integer",
+            "description": "Block number of deployment"
+          }
+        }
+      }
+    },
+    "create3Factory": {
+      "type": "string",
+      "pattern": "^0x[a-fA-F0-9]{40}$",
+      "description": "CREATE3 factory address used"
+    }
+  }
+}
