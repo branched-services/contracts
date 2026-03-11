@@ -5,14 +5,13 @@ set -euo pipefail
 # Uses CREATE3 for deterministic addresses across chains
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INFRARED_DIR="$(dirname "$SCRIPT_DIR")"
 CHAINS_FILE="$SCRIPT_DIR/chains.json"
 DEPLOYMENTS_DIR="$SCRIPT_DIR/deployments"
 
-# Auto-source .env from infrared/ directory if it exists
-if [[ -f "$INFRARED_DIR/.env" ]]; then
+# Auto-source .env from repo root if it exists
+if [[ -f "$SCRIPT_DIR/.env" ]]; then
     set -a
-    source "$INFRARED_DIR/.env"
+    source "$SCRIPT_DIR/.env"
     set +a
 fi
 
@@ -32,7 +31,7 @@ usage() {
     echo "  verify <chain-id>    Verify deployed contracts on block explorer"
     echo "  list-chains          List supported chains"
     echo ""
-    echo "Environment Variables (auto-loaded from infrared/.env):"
+    echo "Environment Variables (auto-loaded from .env):"
     echo "  PRIVATE_KEY          Deployer private key"
     echo "  SAFE_ADDRESS         Safe multi-sig address (required for mainnet, optional for testnet)"
     echo "  <CHAIN>_RPC_URL      RPC URL for the target chain (e.g., ETH_RPC_URL, BASE_RPC_URL)"
@@ -97,7 +96,7 @@ check_create3_factory() {
 
     if [[ "$code" == "0x" || -z "$code" ]]; then
         echo -e "${RED}Error: CREATE3 factory not found at $CREATE3_FACTORY${NC}"
-        echo "See docs/evm-deployment.md#factory-deployment for deployment instructions."
+        echo "The CREATE3 factory must be deployed on this chain before running deployments."
         exit 1
     fi
 }
@@ -268,8 +267,7 @@ deploy() {
         # Mainnet: require Safe address
         if [[ -z "${SAFE_ADDRESS:-}" ]]; then
             echo -e "${RED}Error: Mainnet deployment requires SAFE_ADDRESS${NC}"
-            echo "Set SAFE_ADDRESS in infrared/.env to your Safe multi-sig address."
-            echo "See docs/evm-deployment.md for Safe setup instructions."
+            echo "Set SAFE_ADDRESS in .env to your Safe multi-sig address."
             exit 1
         fi
         validate_safe_address "$SAFE_ADDRESS" "$rpc_url"

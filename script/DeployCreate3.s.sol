@@ -128,7 +128,7 @@ contract DeployCreate3 is Script {
     /// @notice Main deployment function
     function run() public returns (DeploymentResult memory result) {
         // Verify CREATE3 factory exists
-        require(isDeployed(CREATE3_FACTORY), "CREATE3 factory not found. See docs/evm-deployment.md#factory-deployment");
+        require(isDeployed(CREATE3_FACTORY), "CREATE3 factory not found at expected address");
 
         uint256 chainId = block.chainid;
         address deployer = msg.sender;
@@ -222,7 +222,7 @@ contract DeployCreate3 is Script {
             CREATE3_FACTORY,
             isDeployed(CREATE3_FACTORY)
                 ? "(deployed)"
-                : "(NOT DEPLOYED - see docs/evm-deployment.md#factory-deployment)"
+                : "(NOT DEPLOYED)"
         );
         console2.log("");
 
