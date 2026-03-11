@@ -24,37 +24,7 @@ cd "$SCRIPT_DIR"
 echo ""
 echo "📦 Installing dependencies..."
 
-# Initialize git submodules if .gitmodules exists in parent
-if [ -f "../.gitmodules" ]; then
-    echo "   Initializing git submodules..."
-    cd ..
-    git submodule update --init --recursive
-    cd contracts
-fi
-
-# Install forge-std
-if [ ! -d "lib/forge-std" ]; then
-    echo "   Installing forge-std..."
-    forge install foundry-rs/forge-std
-else
-    echo "   ✅ forge-std already installed"
-fi
-
-# Install OpenZeppelin contracts
-if [ ! -d "lib/openzeppelin-contracts" ]; then
-    echo "   Installing openzeppelin-contracts..."
-    forge install OpenZeppelin/openzeppelin-contracts
-else
-    echo "   ✅ openzeppelin-contracts already installed"
-fi
-
-# Install solmate (optional utilities)
-if [ ! -d "lib/solmate" ]; then
-    echo "   Installing solmate..."
-    forge install transmissions11/solmate
-else
-    echo "   ✅ solmate already installed"
-fi
+forge soldeer install
 
 echo ""
 echo "🔨 Building contracts..."

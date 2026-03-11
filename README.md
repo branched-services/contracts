@@ -4,14 +4,30 @@ Solidity contracts for the Infrared execution layer. The `ExecutionProxy` execut
 
 ## Contracts
 
-| Contract | Description |
-|----------|-------------|
-| `ExecutionProxy` | Weiroll VM executor with multi-output slippage checks |
-| `Tupler` | Byte tuple extraction helper |
-| `Integer` | Comparison utilities |
-| `Bytes32` | Type conversion |
-| `BlockchainInfo` | Block data reader |
-| `ArraysConverter` | Array manipulation |
+| Contract          | Description                                           |
+| ----------------- | ----------------------------------------------------- |
+| `ExecutionProxy`  | Weiroll VM executor with multi-output slippage checks |
+| `Tupler`          | Byte tuple extraction helper                          |
+| `Integer`         | Comparison utilities                                  |
+| `Bytes32`         | Type conversion                                       |
+| `BlockchainInfo`  | Block data reader                                     |
+| `ArraysConverter` | Array manipulation                                    |
+
+## Getting Started
+
+Requires [Foundry](https://book.getfoundry.sh/getting-started/installation). Run the init script to install dependencies, build, and test:
+
+```bash
+./init.sh
+```
+
+Or manually:
+
+```bash
+forge soldeer install
+forge build
+forge test
+```
 
 ## Build
 
