@@ -49,7 +49,12 @@ Uses CREATE3 for deterministic addresses across chains.
 ./deploy.sh list-chains            # Show supported chains
 ```
 
-Requires `PRIVATE_KEY` and `<CHAIN>_RPC_URL` environment variables.
+Supports Trezor, Ledger, and private key signing. Copy `.env.example` to `.env` and configure:
+
+- `WALLET_TYPE` -- `trezor`, `ledger`, or `privatekey` (auto-detected from `PRIVATE_KEY` if unset)
+- `DEPLOYER_ADDRESS` -- required for hardware wallets
+- `SAFE_ADDRESS` -- Gnosis Safe multisig, required for mainnet
+- `<CHAIN>_RPC_URL` -- RPC endpoint for target chain
 
 ## License
 

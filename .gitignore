@@ -13,3 +13,11 @@ dependencies/
 
 # Node modules
 node_modules/
+
+# mcp files
+mcp/
+*.mcp
+.mcp.json
+
+# vs code settings
+.vscode/

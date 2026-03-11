@@ -33,7 +33,7 @@ Uses CREATE3 for deterministic cross-chain addresses. Factory: `0x9fBB3DF7C40Da2
 ./deploy.sh list-chains           # Show supported chains
 ```
 
-Requires env vars: `PRIVATE_KEY`, `<CHAIN>_RPC_URL` (e.g. `ETH_RPC_URL`, `BASE_RPC_URL`).
+Supports hardware wallets (Trezor/Ledger) and private key signing. Config via `.env` (see `.env.example`). Key env vars: `WALLET_TYPE`, `DEPLOYER_ADDRESS`, `SAFE_ADDRESS`, `<CHAIN>_RPC_URL`.
 
 Supported chains: Ethereum (1), Base (8453), Sepolia (11155111), Base Sepolia (84532).
 
