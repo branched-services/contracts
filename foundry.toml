@@ -13,6 +13,10 @@ invariant = { runs = 256, depth = 15 }
 # Formatting
 fmt = { line_length = 120, tab_width = 4, bracket_spacing = true }
 
+# Linting - suppress false positives for ERC20 name/symbol/decimals and script cheatcodes
+[lint]
+exclude_lints = ["screaming-snake-case-const", "unsafe-cheatcode"]
+
 [dependencies]
 forge-std = { version = "1.12.0", git = "https://github.com/foundry-rs/forge-std.git", tag = "v1.12.0" }
 "@openzeppelin-contracts" = { version = "5.5.0", git = "https://github.com/OpenZeppelin/openzeppelin-contracts.git", tag = "v5.5.0" }

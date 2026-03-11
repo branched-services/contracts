@@ -143,20 +143,20 @@ contract ReentrantReceiver is ITransferCallback {
 /// @notice Contract that rejects ETH transfers
 /// @dev Used to test ETHTransferFailed error handling
 contract ETHRejectingReceiver {
-    bool public rejectETH = true;
+    bool public rejectEth = true;
 
-    function setRejectETH(bool _reject) external {
-        rejectETH = _reject;
+    function setRejectEth(bool _reject) external {
+        rejectEth = _reject;
     }
 
     receive() external payable {
-        if (rejectETH) {
+        if (rejectEth) {
             revert("ETHRejectingReceiver: rejecting ETH");
         }
     }
 
     fallback() external payable {
-        if (rejectETH) {
+        if (rejectEth) {
             revert("ETHRejectingReceiver: rejecting ETH");
         }
     }

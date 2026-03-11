@@ -518,7 +518,7 @@ contract ExecutionProxyTest is Test {
 
     MockDEX public dex;
 
-    function _deployDEX() internal {
+    function _deployDex() internal {
         if (address(dex) == address(0)) {
             dex = new MockDEX();
         }
@@ -556,7 +556,7 @@ contract ExecutionProxyTest is Test {
 
     /// @notice Test execute with MockDEX swap via real Weiroll commands
     function test_Execute_WithMockDEXSwap() public {
-        _deployDEX();
+        _deployDex();
 
         uint256 amountIn = 1000e18;
         uint256 amountOut = 500e18;
@@ -648,7 +648,7 @@ contract ExecutionProxyTest is Test {
 
     /// @notice Test multi-hop swap (A -> B -> C) with real Weiroll commands
     function test_Execute_MultiHopSwap() public {
-        _deployDEX();
+        _deployDex();
 
         uint256 amountA = 1000e18;
         uint256 amountB = 500e18;

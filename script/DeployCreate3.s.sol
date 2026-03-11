@@ -217,13 +217,7 @@ contract DeployCreate3 is Script {
             console2.log("  (ownership will be transferred to Safe)");
         }
         console2.log("Salt version:", saltVersion);
-        console2.log(
-            "CREATE3 Factory:",
-            CREATE3_FACTORY,
-            isDeployed(CREATE3_FACTORY)
-                ? "(deployed)"
-                : "(NOT DEPLOYED)"
-        );
+        console2.log("CREATE3 Factory:", CREATE3_FACTORY, isDeployed(CREATE3_FACTORY) ? "(deployed)" : "(NOT DEPLOYED)");
         console2.log("");
 
         address execProxy = predictAddress(deployer, EXECUTION_PROXY);

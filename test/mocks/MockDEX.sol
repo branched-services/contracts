@@ -33,7 +33,8 @@ contract MockDEX {
         returns (uint256 actualOut)
     {
         // Transfer tokenIn from caller
-        IERC20(tokenIn).transferFrom(msg.sender, address(this), amountIn);
+        bool success = IERC20(tokenIn).transferFrom(msg.sender, address(this), amountIn);
+        require(success, "MockDEX: transferFrom failed");
 
         // Mint tokenOut to caller
         IMintableERC20(tokenOut).mint(msg.sender, amountOut);
@@ -54,7 +55,8 @@ contract MockDEX {
         returns (uint256 actualOut)
     {
         // Transfer tokenIn from caller
-        IERC20(tokenIn).transferFrom(msg.sender, address(this), amountIn);
+        bool success = IERC20(tokenIn).transferFrom(msg.sender, address(this), amountIn);
+        require(success, "MockDEX: transferFrom failed");
 
         // Mint tokenOut to recipient
         IMintableERC20(tokenOut).mint(recipient, amountOut);
