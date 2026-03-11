@@ -21,6 +21,87 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
+# Determine wallet type from env vars
+# Returns: trezor, ledger, or privatekey
+get_wallet_type() {
+    if [[ -n "${WALLET_TYPE:-}" ]]; then
+        case "$WALLET_TYPE" in
+            trezor|ledger|privatekey)
+                echo "$WALLET_TYPE"
+                ;;
+            *)
+                echo -e "${RED}Error: Invalid WALLET_TYPE '$WALLET_TYPE'. Use: trezor, ledger, or privatekey${NC}" >&2
+                exit 1
+                ;;
+        esac
+    elif [[ -n "${PRIVATE_KEY:-}" ]]; then
+        echo "privatekey"
+    else
+        echo -e "${RED}Error: Set WALLET_TYPE (trezor, ledger, privatekey) or PRIVATE_KEY${NC}" >&2
+        exit 1
+    fi
+}
+
+# Get deployer address based on wallet type
+get_deployer_address() {
+    local wallet_type
+    wallet_type=$(get_wallet_type)
+
+    case "$wallet_type" in
+        trezor|ledger)
+            if [[ -z "${DEPLOYER_ADDRESS:-}" ]]; then
+                echo -e "${RED}Error: DEPLOYER_ADDRESS required for $wallet_type wallet${NC}" >&2
+                echo "Set DEPLOYER_ADDRESS to your hardware wallet's Ethereum address." >&2
+                exit 1
+            fi
+            echo "$DEPLOYER_ADDRESS"
+            ;;
+        privatekey)
+            check_env "PRIVATE_KEY"
+            cast wallet address "$PRIVATE_KEY"
+            ;;
+    esac
+}
+
+# Set FORGE_WALLET_ARGS array for broadcast transactions (signing required)
+set_broadcast_wallet_args() {
+    local deployer="$1"
+    local wallet_type
+    wallet_type=$(get_wallet_type)
+
+    FORGE_WALLET_ARGS=()
+    case "$wallet_type" in
+        trezor)
+            FORGE_WALLET_ARGS+=(--trezor --sender "$deployer")
+            [[ -n "${HD_PATH:-}" ]] && FORGE_WALLET_ARGS+=(--hd-path "$HD_PATH")
+            ;;
+        ledger)
+            FORGE_WALLET_ARGS+=(--ledger --sender "$deployer")
+            [[ -n "${HD_PATH:-}" ]] && FORGE_WALLET_ARGS+=(--hd-path "$HD_PATH")
+            ;;
+        privatekey)
+            FORGE_WALLET_ARGS+=(--private-key "$PRIVATE_KEY")
+            ;;
+    esac
+}
+
+# Set FORGE_WALLET_ARGS array for simulation (no signing required)
+set_simulation_wallet_args() {
+    local deployer="$1"
+    local wallet_type
+    wallet_type=$(get_wallet_type)
+
+    FORGE_WALLET_ARGS=()
+    case "$wallet_type" in
+        trezor|ledger)
+            FORGE_WALLET_ARGS+=(--sender "$deployer")
+            ;;
+        privatekey)
+            FORGE_WALLET_ARGS+=(--private-key "$PRIVATE_KEY")
+            ;;
+    esac
+}
+
 usage() {
     echo "Usage: $0 <command> [options]"
     echo ""
@@ -32,7 +113,10 @@ usage() {
     echo "  list-chains          List supported chains"
     echo ""
     echo "Environment Variables (auto-loaded from .env):"
-    echo "  PRIVATE_KEY          Deployer private key"
+    echo "  WALLET_TYPE          Wallet type: trezor, ledger, privatekey (auto-detects if PRIVATE_KEY set)"
+    echo "  DEPLOYER_ADDRESS     Deployer address (required for trezor/ledger)"
+    echo "  PRIVATE_KEY          Deployer private key (required for privatekey wallet type)"
+    echo "  HD_PATH              HD derivation path (optional, for trezor/ledger)"
     echo "  SAFE_ADDRESS         Safe multi-sig address (required for mainnet, optional for testnet)"
     echo "  <CHAIN>_RPC_URL      RPC URL for the target chain (e.g., ETH_RPC_URL, BASE_RPC_URL)"
     echo "  ETHERSCAN_API_KEY    API key for Etherscan (Ethereum, Sepolia)"
@@ -239,17 +323,16 @@ deploy() {
     display_name=$(get_chain_config "$chain_id" "displayName")
     echo -e "${GREEN}Deploying to $display_name (Chain ID: $chain_id)${NC}"
 
-    # Check required env vars
-    check_env "PRIVATE_KEY"
+    # Get wallet configuration
+    local wallet_type
+    wallet_type=$(get_wallet_type)
+    local deployer
+    deployer=$(get_deployer_address)
 
     local rpc_env
     rpc_env=$(get_chain_config "$chain_id" "rpcEnv")
     check_env "$rpc_env"
     local rpc_url="${!rpc_env}"
-
-    # Get deployer address from private key
-    local deployer
-    deployer=$(cast wallet address "$PRIVATE_KEY")
 
     # Determine owner address based on testnet/mainnet
     local owner_address
@@ -278,19 +361,28 @@ deploy() {
     # Verify CREATE3 factory exists
     check_create3_factory "$rpc_url"
 
-    # Show salt version being used
+    # Show deployment config
     local salt_version="${SALT_VERSION:-v1}"
+    echo "Wallet: $wallet_type"
     echo "Salt version: $salt_version"
     echo "Deployer: $deployer"
 
     # Export owner address for forge script
     export OWNER_ADDRESS="$owner_address"
 
+    # Build wallet arguments for signing
+    set_broadcast_wallet_args "$deployer"
+
+    if [[ "$wallet_type" == "trezor" || "$wallet_type" == "ledger" ]]; then
+        echo ""
+        echo -e "${YELLOW}Hardware wallet: confirm each transaction on your device${NC}"
+    fi
+
     # Run deployment
     cd "$SCRIPT_DIR"
     forge script script/DeployCreate3.s.sol:DeployCreate3 \
         --rpc-url "$rpc_url" \
-        --private-key "$PRIVATE_KEY" \
+        "${FORGE_WALLET_ARGS[@]}" \
         --broadcast \
         -vvv
 
@@ -321,19 +413,28 @@ preview() {
     display_name=$(get_chain_config "$chain_id" "displayName")
     echo -e "${YELLOW}Previewing addresses for $display_name (Chain ID: $chain_id)${NC}"
 
+    # Get deployer address for accurate address prediction
+    local deployer
+    deployer=$(get_deployer_address)
+
     local rpc_env
     rpc_env=$(get_chain_config "$chain_id" "rpcEnv")
     check_env "$rpc_env"
     local rpc_url="${!rpc_env}"
 
-    # Show salt version being used
+    # Show config
     local salt_version="${SALT_VERSION:-v1}"
     echo "Salt version: $salt_version"
+    echo "Deployer: $deployer"
+
+    # Preview is read-only but uses simulation args for consistent address derivation
+    set_simulation_wallet_args "$deployer"
 
     cd "$SCRIPT_DIR"
     forge script script/DeployCreate3.s.sol:DeployCreate3 \
         --rpc-url "$rpc_url" \
         --sig "preview()" \
+        "${FORGE_WALLET_ARGS[@]}" \
         -vvv
 }
 
@@ -353,8 +454,11 @@ dry_run() {
     display_name=$(get_chain_config "$chain_id" "displayName")
     echo -e "${YELLOW}Dry-run deployment for $display_name (Chain ID: $chain_id)${NC}"
 
-    # Check required env vars
-    check_env "PRIVATE_KEY"
+    # Get wallet configuration
+    local wallet_type
+    wallet_type=$(get_wallet_type)
+    local deployer
+    deployer=$(get_deployer_address)
 
     local rpc_env
     rpc_env=$(get_chain_config "$chain_id" "rpcEnv")
@@ -364,10 +468,15 @@ dry_run() {
     # Verify CREATE3 factory exists
     check_create3_factory "$rpc_url"
 
-    # Show salt version being used
+    # Show config
     local salt_version="${SALT_VERSION:-v1}"
+    echo "Wallet: $wallet_type"
     echo "Salt version: $salt_version"
+    echo "Deployer: $deployer"
     echo ""
+
+    # Simulation uses --sender only (no signing, no hardware wallet required)
+    set_simulation_wallet_args "$deployer"
 
     # Run deployment simulation (no --broadcast)
     cd "$SCRIPT_DIR"
@@ -383,7 +492,7 @@ dry_run() {
     echo "=== Simulating deployment ==="
     forge script script/DeployCreate3.s.sol:DeployCreate3 \
         --rpc-url "$rpc_url" \
-        --private-key "$PRIVATE_KEY" \
+        "${FORGE_WALLET_ARGS[@]}" \
         -vvv
 
     echo ""
@@ -434,9 +543,9 @@ verify() {
 
     cd "$SCRIPT_DIR"
 
-    # Get owner address from registry
+    # Get owner address from registry (used for ExecutionProxy constructor arg verification)
     local owner_addr
-    owner_addr=$(jq -r '.deployer' "$registry_file")
+    owner_addr=$(jq -r '.owner' "$registry_file")
 
     # Verify all contracts from chains.json
     while IFS= read -r contract; do

@@ -13,8 +13,14 @@ Deploy Infrared's Solidity contracts with deterministic addresses using CREATE3.
 Add the following to `infrared/.env` (auto-loaded by deploy script):
 
 ```bash
-# Contract deployment
-PRIVATE_KEY=0x...                                      # Deployer private key (NEVER commit)
+# Wallet: trezor, ledger, or privatekey (auto-detected from PRIVATE_KEY if not set)
+WALLET_TYPE=trezor
+DEPLOYER_ADDRESS=0x...                                 # Required for trezor/ledger
+# HD_PATH=m/44'/60'/0'/0/0                             # Optional, default derivation path
+
+# Or use private key directly (CI, testing)
+# PRIVATE_KEY=0x...
+
 SAFE_ADDRESS=0x...                                     # Safe multi-sig (required for mainnet)
 SEPOLIA_RPC_URL=https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY
 BASE_SEPOLIA_RPC_URL=https://base-sepolia.g.alchemy.com/v2/YOUR_KEY
@@ -24,7 +30,9 @@ ETHERSCAN_API_KEY=YOUR_ETHERSCAN_API_KEY
 BASESCAN_API_KEY=YOUR_BASESCAN_API_KEY
 ```
 
-**Note:** `SAFE_ADDRESS` is required for mainnet deployments. The script will fail if not set. For testnet, it's optional - the deployer EOA will be used as owner if not provided.
+**Notes:**
+- Hardware wallet (`trezor`/`ledger`): requires `DEPLOYER_ADDRESS`. Only the `deploy` command needs the device connected; `preview` and `dry-run` simulate without it.
+- `SAFE_ADDRESS` is required for mainnet. For testnet, it's optional -- the deployer EOA is used as owner if not provided.
 
 See `infrared/.env.example` for the full template.
 
