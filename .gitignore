@@ -8,16 +8,42 @@ broadcast/
 # Dependencies (managed by soldeer)
 dependencies/
 
-# Dotenv file
+# Environment files
 .env
+.env.*
+!.env.example
 
 # Node modules
 node_modules/
 
-# mcp files
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# MCP files
 mcp/
 *.mcp
 .mcp.json
 
-# vs code settings
-.vscode/
+# Internal docs
+docs/internal/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp/
+
+# Coverage & analysis
+lcov.info
+coverage/
+slither-report/
+
+# Keystore / secrets
+keystore/
+*.key
+*.pem

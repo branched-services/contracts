@@ -74,6 +74,33 @@ contract DeployCreate3 is Script {
         }
     }
 
+    /// @notice Gets the fee recipient address from env var or returns address(0) (fees disabled)
+    function getFeeRecipient() public view returns (address) {
+        try vm.envAddress("FEE_RECIPIENT") returns (address recipient) {
+            return recipient;
+        } catch {
+            return address(0);
+        }
+    }
+
+    /// @notice Gets the default fee in basis points from env var or returns 0
+    function getDefaultFeeBps() public view returns (uint96) {
+        try vm.envUint("DEFAULT_FEE_BPS") returns (uint256 bps) {
+            return uint96(bps);
+        } catch {
+            return 0;
+        }
+    }
+
+    /// @notice Gets the fee signer address from env var or returns address(0) (overrides disabled)
+    function getFeeSigner() public view returns (address) {
+        try vm.envAddress("FEE_SIGNER") returns (address signer) {
+            return signer;
+        } catch {
+            return address(0);
+        }
+    }
+
     /// @notice Generates a deterministic salt for a contract
     /// @param contractName The name of the contract
     /// @return The salt to use for CREATE3 deployment
@@ -133,6 +160,9 @@ contract DeployCreate3 is Script {
         uint256 chainId = block.chainid;
         address deployer = msg.sender;
         address owner = getOwnerAddress();
+        address _feeRecipient = getFeeRecipient();
+        uint96 _defaultFeeBps = getDefaultFeeBps();
+        address _feeSigner = getFeeSigner();
         string memory saltVersion = getSaltVersion();
 
         console2.log("Deploying contracts...");
@@ -142,6 +172,9 @@ contract DeployCreate3 is Script {
         if (owner != deployer) {
             console2.log("  (ownership will be transferred to Safe)");
         }
+        console2.log("Fee recipient:", _feeRecipient);
+        console2.log("Default fee bps:", uint256(_defaultFeeBps));
+        console2.log("Fee signer:", _feeSigner);
         console2.log("Salt version:", saltVersion);
         console2.log("CREATE3 Factory:", CREATE3_FACTORY);
         console2.log("");
@@ -155,7 +188,9 @@ contract DeployCreate3 is Script {
         address predictedProxy = ICREATE3Factory(CREATE3_FACTORY).getDeployed(deployer, getSalt(EXECUTION_PROXY));
         bool proxyAlreadyDeployed = isDeployed(predictedProxy);
 
-        bytes memory executionProxyCode = abi.encodePacked(type(ExecutionProxy).creationCode, abi.encode(owner));
+        bytes memory executionProxyCode = abi.encodePacked(
+            type(ExecutionProxy).creationCode, abi.encode(owner, _feeRecipient, _defaultFeeBps, _feeSigner)
+        );
         (result.executionProxy, result.deployed[0]) =
             deployIfNeeded(getSalt(EXECUTION_PROXY), executionProxyCode, EXECUTION_PROXY);
 

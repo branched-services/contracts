@@ -21,6 +21,7 @@ contract ReentrantReceiver is ITransferCallback {
     address public attackOutputToken;
     uint256 public attackMinAmount;
     address public attackReceiver;
+    bytes public attackFeeData;
 
     // Track if attack was attempted
     bool public attackAttempted;
@@ -35,7 +36,8 @@ contract ReentrantReceiver is ITransferCallback {
         bytes32[] calldata commands,
         bytes[] calldata state,
         ExecutionProxy.OutputSpec[] calldata outputs,
-        address receiver
+        address receiver,
+        bytes calldata feeData
     ) external {
         delete attackCommands;
         delete attackState;
@@ -51,6 +53,7 @@ contract ReentrantReceiver is ITransferCallback {
             attackOutputs.push(outputs[i]);
         }
         attackReceiver = receiver;
+        attackFeeData = feeData;
         attackViaExecute = true;
         attackEnabled = true;
     }
@@ -61,7 +64,8 @@ contract ReentrantReceiver is ITransferCallback {
         bytes[] calldata state,
         address outputToken,
         uint256 minAmount,
-        address receiver
+        address receiver,
+        bytes calldata feeData
     ) external {
         delete attackCommands;
         delete attackState;
@@ -75,6 +79,7 @@ contract ReentrantReceiver is ITransferCallback {
         attackOutputToken = outputToken;
         attackMinAmount = minAmount;
         attackReceiver = receiver;
+        attackFeeData = feeData;
         attackViaExecute = false;
         attackEnabled = true;
     }
@@ -117,9 +122,11 @@ contract ReentrantReceiver is ITransferCallback {
         require(msg.sender == address(this), "Only self");
 
         if (attackViaExecute) {
-            target.execute(attackCommands, attackState, attackOutputs, attackReceiver);
+            target.execute(attackCommands, attackState, attackOutputs, attackReceiver, attackFeeData);
         } else {
-            target.executeSingle(attackCommands, attackState, attackOutputToken, attackMinAmount, attackReceiver);
+            target.executeSingle(
+                attackCommands, attackState, attackOutputToken, attackMinAmount, attackReceiver, attackFeeData
+            );
         }
     }
 
@@ -135,29 +142,6 @@ contract ReentrantReceiver is ITransferCallback {
             } catch {
                 attackSucceeded = false;
             }
-        }
-    }
-}
-
-/// @title ETHRejectingReceiver
-/// @notice Contract that rejects ETH transfers
-/// @dev Used to test ETHTransferFailed error handling
-contract ETHRejectingReceiver {
-    bool public rejectEth = true;
-
-    function setRejectEth(bool _reject) external {
-        rejectEth = _reject;
-    }
-
-    receive() external payable {
-        if (rejectEth) {
-            revert("ETHRejectingReceiver: rejecting ETH");
-        }
-    }
-
-    fallback() external payable {
-        if (rejectEth) {
-            revert("ETHRejectingReceiver: rejecting ETH");
         }
     }
 }

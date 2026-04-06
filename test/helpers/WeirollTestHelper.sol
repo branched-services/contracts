@@ -128,6 +128,12 @@ library WeirollTestHelper {
         return encodeCommand(selector, FLAG_CT_STATICCALL, indices1(arg0), outIdx, target);
     }
 
+    /// @notice Build a MockERC20.mint(to, amount) command
+    function buildMintCommand(address token, uint8 toIdx, uint8 amountIdx) internal pure returns (bytes32) {
+        // mint(address,uint256) selector = 0x40c10f19
+        return buildCallTwoArgs(token, bytes4(0x40c10f19), toIdx, amountIdx);
+    }
+
     /// @notice Build an ERC20.approve(spender, amount) command
     function buildApproveCommand(address token, uint8 spenderIdx, uint8 amountIdx) internal pure returns (bytes32) {
         // approve(address,uint256) selector = 0x095ea7b3
