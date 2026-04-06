@@ -837,6 +837,25 @@ contract ExecutionProxyTest is Test {
         proxy.execute(commands, state, outputs, receiver, bytes(""));
     }
 
+    /// @notice Test duplicate output tokens with minAmount=0 on both: second silently gets 0
+    function test_Execute_DuplicateOutputToken_ZeroMinBothPass() public {
+        uint256 amount = 1000e18;
+
+        (bytes32[] memory commands, bytes[] memory state) = _buildMintProgram(address(tokenA), amount);
+
+        ExecutionProxy.OutputSpec[] memory outputs = new ExecutionProxy.OutputSpec[](2);
+        outputs[0] = ExecutionProxy.OutputSpec({ token: address(tokenA), minAmount: 0 });
+        outputs[1] = ExecutionProxy.OutputSpec({ token: address(tokenA), minAmount: 0 });
+
+        uint256[] memory actualAmounts = proxy.execute(commands, state, outputs, receiver, bytes(""));
+
+        // First output gets full delta, second gets 0 (no underflow because balanceAfter == balanceBefore == 0)
+        assertEq(actualAmounts[0], amount);
+        assertEq(actualAmounts[1], 0);
+        assertEq(tokenA.balanceOf(receiver), amount);
+        assertEq(tokenA.balanceOf(address(proxy)), 0);
+    }
+
     /// @notice Test mixed ETH and token outputs in same execution
     function test_Execute_MixedETHAndTokenOutputs() public {
         uint256 ethAmount = 1 ether;
@@ -1363,6 +1382,28 @@ contract ExecutionProxyTest is Test {
 
         assertEq(actualAmount, amount);
         assertEq(weth.balanceOf(receiver), amount);
+        assertEq(address(proxy).balance, 0);
+    }
+
+    /// @notice Test msg.value with ERC20-only output: ETH stays in proxy, recoverable via rescue
+    function test_Execute_MsgValueWithERC20OnlyOutput_ETHStaysInProxy() public {
+        uint256 ethSent = 1 ether;
+        uint256 tokenAmount = 1000e18;
+
+        (bytes32[] memory commands, bytes[] memory state) = _buildMintProgram(address(tokenA), tokenAmount);
+
+        uint256 actualAmount =
+            proxy.executeSingle{ value: ethSent }(commands, state, address(tokenA), tokenAmount, receiver, bytes(""));
+
+        assertEq(actualAmount, tokenAmount);
+        assertEq(tokenA.balanceOf(receiver), tokenAmount);
+        // ETH stays in proxy -- no NATIVE_ETH output to capture it
+        assertEq(address(proxy).balance, ethSent);
+
+        // Verify recoverability via rescue
+        address rescueTo = makeAddr("rescueTo");
+        proxy.rescue(proxy.NATIVE_ETH(), rescueTo, ethSent);
+        assertEq(rescueTo.balance, ethSent);
         assertEq(address(proxy).balance, 0);
     }
 

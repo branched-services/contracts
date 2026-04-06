@@ -59,6 +59,9 @@ contract ExecutionProxy is VM, ReentrancyGuard, Ownable, EIP712 {
     address public constant NATIVE_ETH = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
 
     /// @notice Fee recipient address (packed with defaultFeeBps in 1 slot)
+    /// @dev Owner-set trusted address. A reverting feeRecipient will block all ETH-output
+    ///      executions with non-zero fees. No gas limit on the ETH call to support multisig
+    ///      and contract recipients.
     address public feeRecipient;
 
     /// @notice Default fee in basis points
