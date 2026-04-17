@@ -119,8 +119,7 @@ usage() {
     echo "  HD_PATH              HD derivation path (optional, for trezor/ledger)"
     echo "  SAFE_ADDRESS         Safe multi-sig address (required for mainnet, optional for testnet)"
     echo "  <CHAIN>_RPC_URL      RPC URL for the target chain (e.g., ETH_RPC_URL, BASE_RPC_URL)"
-    echo "  ETHERSCAN_API_KEY    API key for Etherscan (Ethereum, Sepolia)"
-    echo "  BASESCAN_API_KEY     API key for Basescan (Base, Base Sepolia)"
+    echo "  ETHERSCAN_API_KEY    Etherscan V2 API key (works across all supported chains)"
     echo "  SALT_VERSION         Salt version for CREATE3 addresses (default: v1)"
     exit 1
 }

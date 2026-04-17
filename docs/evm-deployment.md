@@ -26,8 +26,7 @@ SEPOLIA_RPC_URL=https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY
 BASE_SEPOLIA_RPC_URL=https://base-sepolia.g.alchemy.com/v2/YOUR_KEY
 ETH_RPC_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY
 BASE_RPC_URL=https://base-mainnet.g.alchemy.com/v2/YOUR_KEY
-ETHERSCAN_API_KEY=YOUR_ETHERSCAN_API_KEY
-BASESCAN_API_KEY=YOUR_BASESCAN_API_KEY
+ETHERSCAN_API_KEY=YOUR_ETHERSCAN_API_KEY   # V2 key; works across all supported chains
 ```
 
 **Notes:**
