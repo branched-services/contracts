@@ -203,8 +203,8 @@ forge script script/Verify.s.sol:VerifyDeployment \
       "create3Factory": "0x9fBB3DF7C40Da2e5A0dE984fFE2CCB7C47cd0ABf",
       "explorer": {
         "url": "https://...",
-        "apiUrl": "https://api...",
-        "apiKeyEnv": "<EXPLORER_API_KEY>"
+        "apiUrl": "https://api.etherscan.io/v2/api?chainid=<CHAIN_ID>",
+        "apiKeyEnv": "ETHERSCAN_API_KEY"
       },
       "rpcEnv": "<CHAIN>_RPC_URL",
       "isTestnet": false
@@ -267,8 +267,8 @@ If upgradeability is needed:
 ## Troubleshooting
 
 ### Verification Fails
-- Check API key is correct for target explorer
-- Some explorers have rate limits; wait and retry
+- Ensure `ETHERSCAN_API_KEY` is a valid Etherscan V2 key. Legacy per-explorer keys (BscScan, BaseScan, PolygonScan) return `Invalid API key`
+- Etherscan V2 has rate limits; wait and retry
 - Verify constructor args match exactly
 
 ### CREATE3 Factory Not Deployed {#factory-deployment}
