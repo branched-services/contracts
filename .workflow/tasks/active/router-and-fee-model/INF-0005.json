@@ -26,8 +26,8 @@
     "[manual] Event params reconstruct fee attribution: amountOut sum in event equals pulled-forward side (inputs) equaling the output side post-slippage + partner + positive-slippage (invariant used by INF-0012).",
     "[manual] Native-ETH input call forwards value to executor and bubbles executor reverts verbatim (no silent catch)."
   ],
-  "passing": false,
-  "implementation_notes": "",
+  "passing": true,
+  "implementation_notes": "Implemented swap() and swapRouterFunds() per the Behavior Specification. Added internal helpers: _validateSwapCommon/_validateSwap (Error Handling table), _balanceOf, _pullInput (FR-15 balance-diff), _transferOut (ERC20 + native with ETHTransferFailed), _forwardToExecutor (ERC20 safeTransfer+call; native call{value} with assembly returndata bubble), _executeSwap (steps c..m), and _emitSwap (extracted to avoid stack-too-deep). Event 'amountOut' field reconstructs executor output as amountToUser+outputPartnerFee+positiveSlippage (invariant for INF-0012). swapRouterFunds skips msg.value/transferFrom, requires Router already holds input, and is gated onlyOwnerOrLiquidator. All 9 auto acceptance criteria verified (build, greps, methodIdentifiers); forge test suite (15 tests) passes. Commit 4b4026e.",
   "github_item_id": null,
   "prerequisites": ["INF-0004"],
   "parallel_group": null,
