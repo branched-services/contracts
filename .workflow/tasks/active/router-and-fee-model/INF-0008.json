@@ -1,0 +1,31 @@
+{
+  "id": "INF-0008",
+  "description": "Create test/Router.Fees.t.sol exercising FR-3/4/5/6/7: protocol fee (cap + arithmetic + custody in Router), partner fee on input (transferred before executor call; cap enforced independently), partner fee on output (transferred after slippage cap; reverts if it pushes amountOut below outputMin), positive slippage capture (capped at outputQuote; router retains surplus) vs passPositiveSlippageToUser pass-through (user receives full amount), and combined fee + positive-slippage scenarios.",
+  "category": "test",
+  "commit": "test(router): add protocol/partner fee and positive-slippage tests",
+  "steps": [
+    "Create test/Router.Fees.t.sol extending the same setUp as Router.t.sol (duplicate setUp or factor into test/helpers/RouterTestBase.sol). Add helpers _mkParams(...) that build SwapParams with defaults and allow per-field overrides.",
+    "Protocol fee tests: test_ProtocolFee_Charged (50 bps applied to 1000e18 input -> 5e18 retained in router, 995e18 forwarded); test_ProtocolFee_ZeroBps (no fee, full amount forwarded); test_ProtocolFee_CapExceeds_Reverts (201 bps reverts ProtocolFeeExceedsCap(201)); test_ProtocolFee_AtCap (200 bps succeeds, 2% retained); test_ProtocolFee_AccumulatesInRouter (two consecutive swaps sum fees correctly in router balance); test_NoFees_EmitsZeroFeeFields (protocolFeeBps=0 and partnerFeeBps=0 with produced==outputQuote: via vm.recordLogs decode the Swap event and assert protocolFee == 0, partnerFee == 0, positiveSlippageCaptured == 0, partnerRecipient == address(0) -- locks in edge-case row 3 of the spec).",
+    "Partner fee on input tests: test_PartnerFeeInput_Paid (caller supplies partnerFeeBps=100, partnerRecipient=alice; alice receives 10e18 for 1000e18 input pre-executor; executor gets 990e18 - protocolFee); test_PartnerFeeInput_CapExceeds_Reverts; test_PartnerFeeInput_ZeroRecipient_Reverts (InvalidPartnerRecipient when bps > 0 && recipient == address(0)); test_PartnerFeeInput_StacksWithProtocolFee (both deducted from input, arithmetic verified).",
+    "Partner fee on output tests: test_PartnerFeeOutput_Paid (produced=1000e18, partnerFeeBps=100 -> partnerRecipient gets 10e18, user gets 990e18, deducted after slippage cap); test_PartnerFeeOutput_AfterSlippageCap (amountOut=1100, outputQuote=1000 -> capped to 1000, partner fee 10, user gets 990, router retains 100); test_PartnerFeeOutput_PushesBelowOutputMin_Reverts (SlippageExceeded).",
+    "Positive slippage tests: test_PositiveSlippage_CapturedWhenFlagOff (MockDEX returns 1100, outputQuote=1000, user receives 1000, router retains 100); test_PositiveSlippage_PassThroughWhenFlagOn (user receives 1100); test_PositiveSlippage_NoSurplus_Noop (amountOut == outputQuote); test_PositiveSlippage_AtOutputQuoteExactly_NeitherRetainedNorForfeited.",
+    "Fuzz test: testFuzz_NoSilentShortPayment(uint256 produced, uint256 quote, uint256 minOut, uint16 protoBps, uint16 partnerBps, bool onOutput) bounding inputs to [1, 1e30] and bps to [0, 200]; asserts the final user amount is >= minOut whenever tx succeeds and that tx reverts with SlippageExceeded otherwise.",
+    "Run `forge test --match-path test/Router.Fees.t.sol` with `-vvv` and confirm all pass."
+  ],
+  "acceptance_criteria": [
+    "[auto] File test/Router.Fees.t.sol exists; `forge test --match-path test/Router.Fees.t.sol` passes.",
+    "[auto] grep -c 'function test_' test/Router.Fees.t.sol returns >= 15.",
+    "[auto] grep -n 'test_ProtocolFee_Charged\\|test_ProtocolFee_CapExceeds_Reverts\\|test_ProtocolFee_AtCap\\|test_PartnerFeeInput_Paid\\|test_PartnerFeeInput_CapExceeds_Reverts\\|test_PartnerFeeInput_ZeroRecipient_Reverts\\|test_PartnerFeeOutput_Paid\\|test_PartnerFeeOutput_AfterSlippageCap\\|test_PartnerFeeOutput_PushesBelowOutputMin_Reverts\\|test_PositiveSlippage_CapturedWhenFlagOff\\|test_PositiveSlippage_PassThroughWhenFlagOn\\|test_PositiveSlippage_NoSurplus_Noop\\|test_NoFees_EmitsZeroFeeFields' test/Router.Fees.t.sol returns 13 matches.",
+    "[auto] grep -n 'testFuzz_NoSilentShortPayment' test/Router.Fees.t.sol matches exactly one line.",
+    "[auto] grep -n 'Router.ProtocolFeeExceedsCap.selector\\|Router.PartnerFeeExceedsCap.selector\\|Router.InvalidPartnerRecipient.selector\\|Router.SlippageExceeded.selector' test/Router.Fees.t.sol returns at least 4 matches.",
+    "[auto] Fuzz test uses `bound(_, 0, 200)` for bps parameters (verifiable by grep -n 'bound(.*200)' test/Router.Fees.t.sol).",
+    "[auto] All tests pass under `forge test --match-path test/Router.Fees.t.sol -v`; fuzz runs default 256 iterations per foundry.toml with no failures.",
+    "[manual] Each positive-slippage test asserts BOTH the user's final balance AND the router's retained balance to lock in capture semantics."
+  ],
+  "passing": false,
+  "implementation_notes": "",
+  "github_item_id": null,
+  "prerequisites": ["INF-0005"],
+  "parallel_group": "router-tests-L1",
+  "priority": 5
+}

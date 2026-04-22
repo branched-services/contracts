@@ -1,0 +1,30 @@
+{
+  "id": "INF-0010",
+  "description": "Create test/Router.Access.t.sol covering FR-13/14: Ownable2Step ownership transfer (two-step accept), separate liquidator address settable only by owner, Pausable behavior blocking all swap entry points, and sweep functions (transferRouterFunds + swapRouterFunds) being callable only by owner OR liquidator. Asserts that the liquidator cannot call config functions (setPendingExecutor, setLiquidator, pause/unpause, transferOwnership).",
+  "category": "test",
+  "commit": "test(router): add access control, pause, and sweep permission tests",
+  "steps": [
+    "Create test/Router.Access.t.sol with setUp that deploys Router with a dedicated owner EOA and a dedicated liquidator EOA; deploys ExecutionProxy and wires it via two-step. Seed router with protocol-fee dust by running one successful swap.",
+    "Ownable2Step tests: test_Ownable_InitialOwner (owner() == _owner); test_Ownable_TransferTwoStep (transferOwnership sets pendingOwner; acceptOwnership must be called by new owner; only then does owner() change); test_Ownable_NonOwner_CannotSetPendingExecutor; test_Ownable_NonOwner_CannotSetLiquidator; test_Ownable_NonOwner_CannotPause.",
+    "Liquidator tests: test_Liquidator_Initial (liquidator() == deployed value); test_Liquidator_OwnerCanUpdate (setLiquidator(newAddr) emits LiquidatorUpdated, getter returns newAddr); test_Liquidator_CannotSelfUpdate (vm.prank(liquidator); expect Unauthorized); test_Liquidator_CannotCallConfig (setPendingExecutor, setLiquidator, pause all revert Unauthorized/OwnableUnauthorizedAccount for liquidator).",
+    "Pause tests: test_Pause_BlocksSwap (pause; user calls swap; reverts with Pausable Router.Paused.selector); test_Pause_BlocksSwapMulti; test_Pause_DoesNotBlockSweep (transferRouterFunds works while paused); test_Pause_Unpause_Restores (unpause; swap works again); test_Pause_NonOwner_CannotPause.",
+    "Sweep tests: test_TransferRouterFunds_ByOwner (sweeps ERC20 + native ETH with mixed tokens array to dest; emits FundsTransferred); test_TransferRouterFunds_ByLiquidator (same, but called by liquidator); test_TransferRouterFunds_ByStranger_Reverts (Unauthorized); test_TransferRouterFunds_ArrayLengthMismatch_Reverts; test_TransferRouterFunds_ZeroDest_Reverts (ZeroAddress); test_TransferRouterFunds_EmptyArrays_NoOp (no revert, balances unchanged); test_SwapRouterFunds_ByOwner (sweeps one token into another via executor; uses router-held balance as input, not msg.sender's); test_SwapRouterFunds_ByStranger_Reverts (Unauthorized).",
+    "Run `forge test --match-path test/Router.Access.t.sol` and confirm all pass."
+  ],
+  "acceptance_criteria": [
+    "[auto] File test/Router.Access.t.sol exists; `forge test --match-path test/Router.Access.t.sol` passes.",
+    "[auto] grep -c 'function test_' test/Router.Access.t.sol returns >= 17.",
+    "[auto] grep -n 'test_Ownable_TransferTwoStep\\|test_Liquidator_OwnerCanUpdate\\|test_Liquidator_CannotCallConfig\\|test_Pause_BlocksSwap\\|test_Pause_BlocksSwapMulti\\|test_Pause_DoesNotBlockSweep\\|test_TransferRouterFunds_ByOwner\\|test_TransferRouterFunds_ByLiquidator\\|test_TransferRouterFunds_ByStranger_Reverts\\|test_TransferRouterFunds_ArrayLengthMismatch_Reverts\\|test_TransferRouterFunds_ZeroDest_Reverts\\|test_TransferRouterFunds_EmptyArrays_NoOp\\|test_SwapRouterFunds_ByOwner\\|test_SwapRouterFunds_ByStranger_Reverts' test/Router.Access.t.sol returns 14 matches.",
+    "[auto] grep -n 'OwnableUnauthorizedAccount\\|Router.Unauthorized.selector\\|Router.Paused.selector' test/Router.Access.t.sol returns >= 4 matches.",
+    "[auto] grep -n 'transferOwnership\\|acceptOwnership' test/Router.Access.t.sol returns at least 2 matches (proving 2-step tested end-to-end).",
+    "[manual] test_TransferRouterFunds_ByOwner exercises both an ERC20 and the NATIVE_ETH_SENTINEL entry in the tokens array and asserts dest.balance delta > 0 as well as IERC20.balanceOf(dest) delta > 0.",
+    "[auto] All tests pass; zero skipped; `forge test --match-path test/Router.Access.t.sol -v`.",
+    "[manual] Liquidator negative-path tests prove the role is strictly narrower than owner (no governance capabilities)."
+  ],
+  "passing": false,
+  "implementation_notes": "",
+  "github_item_id": null,
+  "prerequisites": ["INF-0005"],
+  "parallel_group": "router-tests-L1",
+  "priority": 6
+}

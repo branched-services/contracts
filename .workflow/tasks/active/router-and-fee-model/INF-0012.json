@@ -1,0 +1,30 @@
+{
+  "id": "INF-0012",
+  "description": "Create test/Router.Invariant.t.sol with the accounting invariant from the spec's Non-Functional Requirements: `sumOfUserReceived + protocolFeesAccrued + partnerFeesPaid + positiveSlippageRetained == aggregateBalanceDiffOfExecutor`. Implements a handler contract that fuzzes calls to swap()/swapMulti() across a bounded set of tokens, bps values, and pass-through flags, while a ghost variable accumulator tracks the components. Runs under foundry.toml's invariant config (runs=256, depth=15).",
+  "category": "test",
+  "commit": "test(router): add accounting invariant suite",
+  "steps": [
+    "Create test/Router.Invariant.t.sol with setUp deploying Router, ExecutionProxy, and a RouterHandler at test/helpers/RouterHandler.sol.",
+    "Write test/helpers/RouterHandler.sol as a Foundry invariant handler exposing swapRandom(uint256 seed, uint256 inAmount, uint16 protoBps, uint16 partnerBps, bool onOutput, bool passThrough) and swapMultiRandom(...). Handler bounds bps to [0,200], picks inputToken/outputToken from a fixed set of 4 MockERC20 tokens + NATIVE_ETH_SENTINEL, skips self-swap + duplicate cases, mints fresh balance for each call, pranks as one of 3 rotating users, then calls Router. On success, handler increments ghost variables: ghost_userReceived[outputToken] += amountToUser, ghost_protocolFees[inputToken] += computed protocol fee, ghost_partnerFees[token] += computed partner fee, ghost_positiveSlippage[outputToken] += computed retained surplus, and ghost_executorInflow[inputToken] += forwardAmount, ghost_executorOutflow[outputToken] += produced.",
+    "In the invariant test contract, declare target contracts via targetContract(handler) and implement function invariant_AccountingConservation() that iterates across the token set and asserts: `ghost_userReceived[token] + router.balanceOf(token) as protocol/slippage retention + ghost_partnerFees[token] == ghost_executorOutflow[token]` for each output; for each input, `ghost_executorInflow[token] + ghost_protocolFees[token] + ghost_inputPartnerFees[token] == sum(pulled over all calls)`. Document the exact equation in a comment referencing the spec.",
+    "Add invariant_NoResidualUserInput asserting router holds zero of the test users' original input tokens beyond what was intentionally retained (protocol fees + retained slippage tracked by ghosts).",
+    "Add invariant_NoDustLost asserting that for every successful call, the sum of Transfer events from the Router equals pulled - (stuff kept in router).",
+    "Run `forge test --match-path test/Router.Invariant.t.sol -vvv` and confirm all invariants hold across the default 256 runs / depth 15."
+  ],
+  "acceptance_criteria": [
+    "[auto] Files test/Router.Invariant.t.sol AND test/helpers/RouterHandler.sol exist.",
+    "[auto] `forge test --match-path test/Router.Invariant.t.sol` passes under foundry.toml's configured invariant runs/depth.",
+    "[auto] grep -n 'function invariant_AccountingConservation\\|function invariant_NoResidualUserInput\\|function invariant_NoDustLost' test/Router.Invariant.t.sol returns 3 matches.",
+    "[auto] grep -n 'ghost_userReceived\\|ghost_protocolFees\\|ghost_partnerFees\\|ghost_positiveSlippage\\|ghost_executorInflow\\|ghost_executorOutflow' test/helpers/RouterHandler.sol returns >= 6 matches.",
+    "[auto] grep -n 'targetContract\\|targetSelector' test/Router.Invariant.t.sol returns at least one match wiring the handler.",
+    "[auto] grep -n 'bound(.*200)' test/helpers/RouterHandler.sol returns at least one match bounding bps parameters.",
+    "[manual] invariant_AccountingConservation asserts, for each token T in the fixed token set: ghost_userReceived[T] + ghost_protocolFees[T] + ghost_partnerFees[T] + ghost_positiveSlippage[T] == ghost_executorOutflow[T] + ghost_executorInflow[T] rearranged to match the spec's `sumUserReceived + protocolFeesAccrued + partnerFeesPaid + positiveSlippageRetained == aggregateBalanceDiffOfExecutor`, with a comment pointing at the spec's §Non-Functional Requirements invariant line.",
+    "[manual] Handler covers both swap() and swapMulti() paths and exercises the pass-through flag and partnerFeeOnOutput flag in different calls."
+  ],
+  "passing": false,
+  "implementation_notes": "",
+  "github_item_id": null,
+  "prerequisites": ["INF-0006"],
+  "parallel_group": "router-tests-L2",
+  "priority": 7
+}

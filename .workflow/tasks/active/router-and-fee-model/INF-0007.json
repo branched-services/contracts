@@ -1,0 +1,31 @@
+{
+  "id": "INF-0007",
+  "description": "Create test/Router.t.sol covering Router.swap() happy paths and all quote/integrity validation reverts from the Error Handling table. Scope: ERC20->ERC20 happy path, ERC20->NATIVE_ETH_SENTINEL happy path, NATIVE_ETH_SENTINEL->ERC20 happy path, each of the Zero/Invalid/Self-swap revert cases, ETHValueMismatch revert, ExecutorNotSet revert, executor two-step registry (setPendingExecutor + acceptExecutor) swap behavior. Fee math is intentionally trivial (zero fees) in this file so it isolates the core swap pipeline. Fee-specific assertions live in INF-0008.",
+  "category": "test",
+  "commit": "test(router): add single-swap happy path and integrity reverts",
+  "steps": [
+    "Create test/Router.t.sol with setUp() that deploys: refactored pure-VM ExecutionProxy, Router(owner=address(this), liquidator=makeAddr('liquidator')), calls router.setPendingExecutor(address(executor)) + router.acceptExecutor(), deploys MockERC20 tokens A/B/C, MockWETH (reuse helpers from test/ExecutionProxy.t.sol by promoting MockERC20/MockWETH into test/helpers/MockERC20.sol -- or duplicate minimally at the top of this test). Grant user 100 ether.",
+    "Add test_SwapERC20ToERC20 asserting: user approves router, calls swap(SwapParams{inputToken=A,inputAmount=1000e18,outputToken=B,outputQuote=900e18,outputMin=800e18,recipient=receiver,...,weirollCommands+state = MockDEX swap}); receiver.balanceOf(B) within [outputMin, outputQuote]; router.balanceOf(A)==0; router.balanceOf(B)==0 when amountOut == outputQuote exactly; Swap event emitted with correct fields.",
+    "Add test_SwapNativeETHIn calling swap{value:1 ether}(...) with inputToken=NATIVE_ETH_SENTINEL; verify receiver token balance and router.balance==0. Add test_SwapNativeETHOut with outputToken=NATIVE_ETH_SENTINEL; verify receiver.balance delta and router.balance==0. Reuse ExecutionProxy test's `_buildMintProgram`-style helper adapted for Router forwarding.",
+    "Add revert tests for each validation case: test_Revert_ZeroInputAmount, test_Revert_ZeroOutputQuote, test_Revert_ZeroOutputMin, test_Revert_InvalidSlippageBounds (outputMin > outputQuote), test_Revert_SelfSwap (inputToken == outputToken), test_Revert_ETHValueMismatch_NativeIn (msg.value != inputAmount), test_Revert_ETHValueMismatch_ERC20In (msg.value != 0 with ERC20 input), test_Revert_ExecutorNotSet (no acceptExecutor called), test_Revert_Paused (expects Router.Paused selector from the overridden Pausable hook). Use `vm.expectRevert` with the exact error selector.",
+    "Add test_Revert_ExecutorBubblesUp_PreservesApproval: deploy a mock executor whose executePath() reverts with `RevertingExecutor.Boom()`; give the user 1000e18 of inputToken and an infinite approval to the Router; call swap; assert the swap reverts with Boom.selector (no silent catch), assert inputToken.balanceOf(user) == 1000e18 (no tokens lost), assert inputToken.allowance(user, router) is unchanged, and assert router and executor hold zero of both tokens (atomic rollback).",
+    "Add test_ExecutorRegistry_TwoStep verifying: setPendingExecutor(newExec) does not change executor; acceptExecutor() updates it; swap executes against the new address; non-owner cannot call setPendingExecutor; acceptExecutor reverts when pendingExecutor is address(0).",
+    "Run `forge test --match-contract RouterTest -vvv` and ensure all tests pass."
+  ],
+  "acceptance_criteria": [
+    "[auto] File test/Router.t.sol exists; `forge test --match-path test/Router.t.sol` passes.",
+    "[auto] grep -c 'function test_' test/Router.t.sol returns >= 14.",
+    "[auto] grep -n 'test_SwapERC20ToERC20\\|test_SwapNativeETHIn\\|test_SwapNativeETHOut\\|test_Revert_ZeroInputAmount\\|test_Revert_ZeroOutputQuote\\|test_Revert_ZeroOutputMin\\|test_Revert_InvalidSlippageBounds\\|test_Revert_SelfSwap\\|test_Revert_ETHValueMismatch_NativeIn\\|test_Revert_ETHValueMismatch_ERC20In\\|test_Revert_ExecutorNotSet\\|test_Revert_Paused\\|test_Revert_ExecutorBubblesUp_PreservesApproval\\|test_ExecutorRegistry_TwoStep' test/Router.t.sol returns 14 matches.",
+    "[auto] grep -n 'Router.SlippageExceeded.selector\\|Router.ZeroInputAmount.selector\\|Router.ZeroOutputQuote.selector\\|Router.SelfSwap.selector\\|Router.InvalidSlippageBounds.selector\\|Router.ETHValueMismatch.selector\\|Router.ExecutorNotSet.selector' test/Router.t.sol returns at least 6 matches.",
+    "[auto] test_SwapERC20ToERC20 asserts on at least 4 post-conditions (receiver balance, router balance, event emission via vm.expectEmit, return value).",
+    "[auto] test_ExecutorRegistry_TwoStep exercises at least 4 state transitions (initial zero, pending set, accept, subsequent swap).",
+    "[auto] `forge test --match-path test/Router.t.sol -v` shows zero failing and zero skipped tests.",
+    "[manual] Swap event assertion uses vm.expectEmit(true, false, false, true) (checkTopic1 + checkData both true) so the indexed sender and all 9 non-indexed data fields are value-compared against the expected event."
+  ],
+  "passing": false,
+  "implementation_notes": "",
+  "github_item_id": null,
+  "prerequisites": ["INF-0005"],
+  "parallel_group": "router-tests-L1",
+  "priority": 5
+}

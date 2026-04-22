@@ -1,0 +1,31 @@
+{
+  "id": "INF-0013",
+  "description": "Update deployment artifacts so Router and the refactored ExecutionProxy deploy atomically via CREATE3 to deterministic addresses on Ethereum (1), Base (8453), Sepolia (11155111), Base Sepolia (84532), with Router.executor wired to ExecutionProxy via the two-step registry in a follow-on owner tx. Updates script/DeployCreate3.s.sol (primary), script/Deploy.s.sol (dev convenience), chains.json (entry list), and deploy.sh (contract-name list and preview output) per spec's Integration Points and Technical Context sections.",
+  "category": "chore",
+  "commit": "chore(deploy): deploy Router + pure-VM ExecutionProxy via CREATE3",
+  "steps": [
+    "Update script/DeployCreate3.s.sol: remove constructor args for ExecutionProxy (now stateless); add constant `string public constant ROUTER = \"Router\";`; add env var helpers getRouterOwner()/getRouterLiquidator(); extend DeploymentResult struct with `address router; bool routerDeployed`; in run(), deploy ExecutionProxy (no constructor args), then deploy Router with creation code `abi.encodePacked(type(Router).creationCode, abi.encode(ownerAddr, liquidatorAddr))`; after both deploys, if broadcasting owner is the Router owner, call router.setPendingExecutor(executionProxyAddr); add console2.log line warning that acceptExecutor() must be called by owner multisig in a follow-up tx.",
+    "Extend preview() in DeployCreate3.s.sol to print the predicted Router address alongside existing contracts.",
+    "Update script/Deploy.s.sol to do the same thing non-deterministically for dev: `ExecutionProxy proxy = new ExecutionProxy(); Router router = new Router(msg.sender, msg.sender); router.setPendingExecutor(address(proxy)); router.acceptExecutor();` then console2.log both addresses.",
+    "Update chains.json to ensure all four supported chains (1, 8453, 11155111, 84532) have entries and add a note field referencing the Router as the primary user-facing contract; bump a schema_version or doc comment to indicate the new layout.",
+    "Update deploy.sh: extend the preview/dry-run/deploy output to include Router (read from DeploymentResult in the Solidity script's log output). Update any contract-name allowlist or documentation comments near the top of deploy.sh that enumerate deployed contracts. Add a post-deploy reminder line instructing the operator to send an `acceptExecutor()` multisig tx on each chain.",
+    "Run `forge script script/DeployCreate3.s.sol --sig 'preview()'` (no broadcast, no wallet, no live RPC) and confirm stdout contains both the ExecutionProxy and Router predicted addresses. Also run `./deploy.sh preview 11155111` manually when a Sepolia RPC is configured to smoke-test the shell wrapper -- not part of the [auto] acceptance since CI may not have an RPC."
+  ],
+  "acceptance_criteria": [
+    "[auto] grep -n 'string public constant ROUTER = \"Router\"' script/DeployCreate3.s.sol matches exactly one line.",
+    "[auto] grep -n 'type(Router).creationCode' script/DeployCreate3.s.sol matches at least one line.",
+    "[auto] grep -n 'setPendingExecutor' script/DeployCreate3.s.sol matches at least one line (wiring step logged).",
+    "[auto] grep -n 'new ExecutionProxy()\\|new Router(' script/Deploy.s.sol returns >= 2 matches.",
+    "[auto] `forge build` compiles the whole project (including script/DeployCreate3.s.sol and script/Deploy.s.sol) with zero errors.",
+    "[auto] `forge script script/DeployCreate3.s.sol --sig 'preview()'` (no broadcast, no RPC required) exits 0 and its output contains both 'ExecutionProxy' and 'Router' followed by a 0x-prefixed 40-hex address.",
+    "[auto] `forge test` still passes for the full test suite after deploy-script edits (regression check).",
+    "[manual] chains.json retains the four supported chain IDs (1, 8453, 11155111, 84532) and no chain was accidentally dropped.",
+    "[manual] deploy.sh output includes a post-deploy operator note instructing acceptExecutor() be invoked from the owner multisig (cannot be automated in-script because deploy broadcaster != owner multisig)."
+  ],
+  "passing": false,
+  "implementation_notes": "",
+  "github_item_id": null,
+  "prerequisites": ["INF-0002", "INF-0006"],
+  "parallel_group": null,
+  "priority": 8
+}

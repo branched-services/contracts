@@ -1,0 +1,29 @@
+{
+  "id": "INF-0009",
+  "description": "Create test/Router.MultiSwap.t.sol covering FR-2 and the multi-swap rows of the Error Handling and Edge Cases tables. Scope: N-to-M happy path; pairwise duplicate detection in inputs and outputs; input/output intersection detection; per-output slippage enforcement; pro-rata fee distribution matching the NatSpec-documented policy from INF-0006; NATIVE_ETH_SENTINEL as one of multiple inputs; partial-output production (one of M outputs below its outputMin reverts entire tx).",
+  "category": "test",
+  "commit": "test(router): add swapMulti atomicity, duplicate, and pro-rata tests",
+  "steps": [
+    "Create test/Router.MultiSwap.t.sol sharing the RouterTestBase setup (or duplicate minimal setUp). Seed router with no dust; seed user with tokenA, tokenB, tokenC balances.",
+    "Happy path tests: test_MultiSwap_TwoInTwoOut (inputs [A, B], outputs [C, D]; MockDEX programmed to split) asserting each output lands in recipient at or above outputMin, router holds zero residual of each token; test_MultiSwap_WithNativeETH_AsOneInput asserting msg.value forwarded and at least one output produced from NATIVE_ETH_SENTINEL input.",
+    "Duplicate/intersection revert tests: test_MultiSwap_DuplicateInput_Reverts (inputs [A, A]), test_MultiSwap_DuplicateOutput_Reverts (outputs [C, C]), test_MultiSwap_InputOutputIntersection_Reverts (inputs [A], outputs [A]); each asserts DuplicateToken(token) or InputOutputIntersection(token) with the exact offending token address.",
+    "Array length + zero tests: test_MultiSwap_ArrayLengthMismatch_Reverts (inputAmounts.length != inputTokens.length), test_MultiSwap_EmptyInputs_Reverts, test_MultiSwap_EmptyOutputs_Reverts, test_MultiSwap_ZeroAmountInput_Reverts.",
+    "Pro-rata fee tests: test_MultiSwap_ProRataProtocolFee (2% protocol fee on two inputs of equal size -> each contributes proportional fee; router retains sum); test_MultiSwap_ProRataPartnerFee_OnOutput (partnerFeeOnOutput=true with outputs [1000e18, 500e18] and partnerFeeBps=100 -> partner recipient receives 10e18 + 5e18); test_MultiSwap_PerOutputSlippage (one output below its outputMin reverts entire tx with SlippageExceeded(offending token, got, min)).",
+    "Run `forge test --match-path test/Router.MultiSwap.t.sol` and confirm all pass."
+  ],
+  "acceptance_criteria": [
+    "[auto] File test/Router.MultiSwap.t.sol exists; `forge test --match-path test/Router.MultiSwap.t.sol` passes.",
+    "[auto] grep -c 'function test_' test/Router.MultiSwap.t.sol returns >= 12.",
+    "[auto] grep -n 'test_MultiSwap_TwoInTwoOut\\|test_MultiSwap_WithNativeETH_AsOneInput\\|test_MultiSwap_DuplicateInput_Reverts\\|test_MultiSwap_DuplicateOutput_Reverts\\|test_MultiSwap_InputOutputIntersection_Reverts\\|test_MultiSwap_ArrayLengthMismatch_Reverts\\|test_MultiSwap_EmptyInputs_Reverts\\|test_MultiSwap_EmptyOutputs_Reverts\\|test_MultiSwap_ZeroAmountInput_Reverts\\|test_MultiSwap_ProRataProtocolFee\\|test_MultiSwap_ProRataPartnerFee_OnOutput\\|test_MultiSwap_PerOutputSlippage' test/Router.MultiSwap.t.sol returns 12 matches.",
+    "[auto] grep -n 'Router.DuplicateToken.selector\\|Router.InputOutputIntersection.selector\\|Router.ArrayLengthMismatch.selector\\|Router.SlippageExceeded.selector' test/Router.MultiSwap.t.sol returns >= 4 matches.",
+    "[auto] At least one test uses vm.expectEmit to assert Swap events are emitted per-output (one event per output token in swapMulti).",
+    "[auto] All tests pass under `forge test --match-path test/Router.MultiSwap.t.sol -v` with zero failures.",
+    "[manual] Pro-rata assertion matches the attribution policy documented in Router.sol NatSpec above swapMulti (if equal-split, each output carries sum/n; if proportional, each carries quote-weighted share)."
+  ],
+  "passing": false,
+  "implementation_notes": "",
+  "github_item_id": null,
+  "prerequisites": ["INF-0006"],
+  "parallel_group": "router-tests-L2",
+  "priority": 6
+}
