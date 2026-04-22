@@ -24,8 +24,8 @@
     "[manual] Pro-rata fee attribution rule is documented in NatSpec above swapMulti (chosen policy: equal split across outputs OR proportional to outputQuotes) and matches what INF-0009 tests assert.",
     "[manual] Native ETH support in swapMulti: tx reverts if msg.value != 0 and no input is NATIVE_ETH_SENTINEL; reverts if multiple inputs are NATIVE_ETH_SENTINEL."
   ],
-  "passing": false,
-  "implementation_notes": "",
+  "passing": true,
+  "implementation_notes": "Implemented swapMulti() per FR-2/8 with atomic N-to-M settlement. Added _requireNoDuplicates (O(n^2) pairwise) and _requireNoIntersection helpers; _validateMultiSwap enforces array-length parity, zero/slippage checks, fee caps, duplicate/intersection rejection, and msg.value reconciliation against the single NATIVE_ETH_SENTINEL input slot (duplicate check guarantees at most one native slot, so multiple natives revert DuplicateToken). _pullInputs loop skims protocol + input-side partner fees via balance-diff, forwards ERC20 remainders via safeTransfer to executor and accumulates nativeForwardAmount for a single unified IExecutor.executePath call. _settleOutputs applies per-output positive-slippage capping, output-side partner fee deduction, slippage floor, and recipient transfer. _emitMultiSwaps emits one Swap per output using equal-split pro-rata for aggregate input-side fees (final output absorbs integer-division remainder, documented in NatSpec); output-side partner fees attributed per-output. Inner emit extracted into _emitSwap10 helper to stay under EVM stack limit. All 8 auto acceptance criteria verified (build, greps, methodIdentifiers); full forge test suite (15 tests) still passes. Commit 3e7401f.",
   "github_item_id": null,
   "prerequisites": ["INF-0005"],
   "parallel_group": null,
