@@ -2,7 +2,19 @@
 set -euo pipefail
 
 # Infrared Contract Deployment Script
-# Uses CREATE3 for deterministic addresses across chains
+# Uses CREATE3 for deterministic addresses across chains.
+#
+# Contracts deployed (order defined in chains.json "contracts"):
+#   Router          -- primary user-facing contract; holds ERC20 approvals + fee/slippage model
+#   ExecutionProxy  -- pure Weiroll VM executor (stateless, no constructor)
+#   Tupler, Integer, Bytes32, BlockchainInfo, ArraysConverter -- stateless Weiroll helpers
+#
+# Router.executor is wired via a two-step registry:
+#   1. DeployCreate3 calls router.setPendingExecutor(executionProxy) in-script ONLY when the
+#      broadcasting EOA is also ROUTER_OWNER. Production deploys from a multisig MUST send
+#      both setPendingExecutor() and acceptExecutor() as follow-up multisig txs.
+#   2. The Router owner multisig MUST send `router.acceptExecutor()` before the Router can
+#      serve any swaps. The `deploy` command prints a reminder after each broadcast.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CHAINS_FILE="$SCRIPT_DIR/chains.json"
@@ -198,11 +210,17 @@ get_contracts() {
 # Get contract source path for verification
 get_contract_path() {
     local contract="$1"
-    if [[ "$contract" == "ExecutionProxy" ]]; then
-        echo "src/ExecutionProxy.sol:ExecutionProxy"
-    else
-        echo "src/weiroll-helpers/${contract}.sol:${contract}"
-    fi
+    case "$contract" in
+        ExecutionProxy)
+            echo "src/ExecutionProxy.sol:ExecutionProxy"
+            ;;
+        Router)
+            echo "src/Router.sol:Router"
+            ;;
+        *)
+            echo "src/weiroll-helpers/${contract}.sol:${contract}"
+            ;;
+    esac
 }
 
 # Generate deployment registry from broadcast logs
@@ -366,8 +384,13 @@ deploy() {
     echo "Salt version: $salt_version"
     echo "Deployer: $deployer"
 
-    # Export owner address for forge script
+    # Export Router owner/liquidator for forge script. ROUTER_OWNER defaults to the resolved
+    # Safe/EOA; ROUTER_LIQUIDATOR defaults to the same unless the operator overrides it via .env.
     export OWNER_ADDRESS="$owner_address"
+    export ROUTER_OWNER="${ROUTER_OWNER:-$owner_address}"
+    export ROUTER_LIQUIDATOR="${ROUTER_LIQUIDATOR:-$owner_address}"
+    echo "Router owner: $ROUTER_OWNER"
+    echo "Router liquidator: $ROUTER_LIQUIDATOR"
 
     # Build wallet arguments for signing
     set_broadcast_wallet_args "$deployer"
@@ -394,6 +417,17 @@ deploy() {
     echo ""
     echo "Next steps:"
     echo "  1. Run '$0 verify $chain_id' to verify contracts on block explorer"
+    echo ""
+    echo -e "${YELLOW}[ACTION REQUIRED] Router.executor wiring${NC}"
+    if [[ "$deployer" == "$ROUTER_OWNER" ]]; then
+        echo "  Deployer broadcast router.setPendingExecutor(executionProxy) during run()."
+        echo "  The Router owner multisig must still send router.acceptExecutor() before"
+        echo "  the Router can serve swaps on $display_name."
+    else
+        echo "  Router owner ($ROUTER_OWNER) must send two txs from the multisig on $display_name:"
+        echo "    1) router.setPendingExecutor(executionProxy)"
+        echo "    2) router.acceptExecutor()"
+    fi
 }
 
 preview() {
@@ -425,6 +459,12 @@ preview() {
     local salt_version="${SALT_VERSION:-v1}"
     echo "Salt version: $salt_version"
     echo "Deployer: $deployer"
+
+    # Surface Router owner / liquidator env for the forge script
+    export ROUTER_OWNER="${ROUTER_OWNER:-${SAFE_ADDRESS:-$deployer}}"
+    export ROUTER_LIQUIDATOR="${ROUTER_LIQUIDATOR:-$deployer}"
+    echo "Router owner: $ROUTER_OWNER"
+    echo "Router liquidator: $ROUTER_LIQUIDATOR"
 
     # Preview is read-only but uses simulation args for consistent address derivation
     set_simulation_wallet_args "$deployer"
@@ -472,6 +512,12 @@ dry_run() {
     echo "Wallet: $wallet_type"
     echo "Salt version: $salt_version"
     echo "Deployer: $deployer"
+
+    # Surface Router owner / liquidator env for the forge script
+    export ROUTER_OWNER="${ROUTER_OWNER:-${SAFE_ADDRESS:-$deployer}}"
+    export ROUTER_LIQUIDATOR="${ROUTER_LIQUIDATOR:-$deployer}"
+    echo "Router owner: $ROUTER_OWNER"
+    echo "Router liquidator: $ROUTER_LIQUIDATOR"
     echo ""
 
     # Simulation uses --sender only (no signing, no hardware wallet required)
@@ -542,9 +588,10 @@ verify() {
 
     cd "$SCRIPT_DIR"
 
-    # Get owner address from registry (used for ExecutionProxy constructor arg verification)
-    local owner_addr
-    owner_addr=$(jq -r '.owner' "$registry_file")
+    # Router constructor args are (address _owner, address _liquidator). Fall back to deployer
+    # when ROUTER_OWNER / ROUTER_LIQUIDATOR env vars are unset (matches run() default).
+    local router_owner="${ROUTER_OWNER:-${OWNER_ADDRESS:-$(jq -r '.owner' "$registry_file")}}"
+    local router_liquidator="${ROUTER_LIQUIDATOR:-$router_owner}"
 
     # Verify all contracts from chains.json
     while IFS= read -r contract; do
@@ -555,16 +602,16 @@ verify() {
 
         echo "Verifying $contract at $addr..."
 
-        if [[ "$contract" == "ExecutionProxy" ]]; then
-            # ExecutionProxy has constructor arg: owner
+        if [[ "$contract" == "Router" ]]; then
+            # Router has constructor args: (address owner, address liquidator)
             forge verify-contract "$addr" "$path" \
                 --chain-id "$chain_id" \
                 --verifier-url "$api_url" \
                 --etherscan-api-key "$api_key" \
-                --constructor-args "$(cast abi-encode 'constructor(address)' "$owner_addr")" \
+                --constructor-args "$(cast abi-encode 'constructor(address,address)' "$router_owner" "$router_liquidator")" \
                 --watch || echo -e "${YELLOW}$contract verification may have failed or already verified${NC}"
         else
-            # Stateless helpers (no constructor args)
+            # ExecutionProxy (stateless post-refactor) and all Weiroll helpers have no constructor args.
             forge verify-contract "$addr" "$path" \
                 --chain-id "$chain_id" \
                 --verifier-url "$api_url" \

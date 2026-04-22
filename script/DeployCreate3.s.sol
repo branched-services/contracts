@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import { Script, console2 } from "forge-std/Script.sol";
 import { ExecutionProxy } from "../src/ExecutionProxy.sol";
+import { Router } from "../src/Router.sol";
 import { Tupler } from "../src/weiroll-helpers/Tupler.sol";
 import { Integer } from "../src/weiroll-helpers/Integer.sol";
 import { Bytes32 } from "../src/weiroll-helpers/Bytes32.sol";
@@ -37,21 +38,28 @@ contract DeployCreate3 is Script {
 
     // Contract names for salt generation
     string public constant EXECUTION_PROXY = "ExecutionProxy";
+    string public constant ROUTER = "Router";
     string public constant TUPLER = "Tupler";
     string public constant INTEGER = "Integer";
     string public constant BYTES32 = "Bytes32";
     string public constant BLOCKCHAIN_INFO = "BlockchainInfo";
     string public constant ARRAYS_CONVERTER = "ArraysConverter";
 
+    // CREATE3 proxy bytecode hash (from solmate/ZeframLou CREATE3). Used to predict the deployed
+    // address locally when no RPC is available (e.g. CI-less preview).
+    bytes32 internal constant CREATE3_PROXY_BYTECODE_HASH = keccak256(hex"67363d3d37363d34f03d5260086018f3");
+
     // Deployment results
     struct DeploymentResult {
         address executionProxy;
+        address router;
         address tupler;
         address integer;
         address bytes32Helper;
         address blockchainInfo;
         address arraysConverter;
-        bool[] deployed; // true if newly deployed, false if already existed
+        bool[] deployed; // true if newly deployed, false if already existed (indexed in enumeration order)
+        bool routerDeployed; // true if Router was newly deployed in this run
     }
 
     /// @notice Gets the salt version from env var or returns default
@@ -64,40 +72,29 @@ contract DeployCreate3 is Script {
         }
     }
 
-    /// @notice Gets the owner address from env var or returns msg.sender
-    /// @return The owner address for ExecutionProxy
-    function getOwnerAddress() public view returns (address) {
-        try vm.envAddress("OWNER_ADDRESS") returns (address owner) {
+    /// @notice Gets the Router owner address from env var or returns msg.sender
+    /// @dev Router owner is an Ownable2Step multisig in production. Falls back to deployer when
+    ///      unset so dev / preview flows work without extra env plumbing.
+    function getRouterOwner() public view returns (address) {
+        try vm.envAddress("ROUTER_OWNER") returns (address owner) {
             return owner;
         } catch {
+            try vm.envAddress("OWNER_ADDRESS") returns (address owner) {
+                return owner;
+            } catch {
+                return msg.sender;
+            }
+        }
+    }
+
+    /// @notice Gets the Router liquidator address from env var or returns msg.sender
+    /// @dev Router requires a non-zero liquidator at construction; the owner can later call
+    ///      `setLiquidator(address(0))` to disable the role.
+    function getRouterLiquidator() public view returns (address) {
+        try vm.envAddress("ROUTER_LIQUIDATOR") returns (address liq) {
+            return liq;
+        } catch {
             return msg.sender;
-        }
-    }
-
-    /// @notice Gets the fee recipient address from env var or returns address(0) (fees disabled)
-    function getFeeRecipient() public view returns (address) {
-        try vm.envAddress("FEE_RECIPIENT") returns (address recipient) {
-            return recipient;
-        } catch {
-            return address(0);
-        }
-    }
-
-    /// @notice Gets the default fee in basis points from env var or returns 0
-    function getDefaultFeeBps() public view returns (uint96) {
-        try vm.envUint("DEFAULT_FEE_BPS") returns (uint256 bps) {
-            return uint96(bps);
-        } catch {
-            return 0;
-        }
-    }
-
-    /// @notice Gets the fee signer address from env var or returns address(0) (overrides disabled)
-    function getFeeSigner() public view returns (address) {
-        try vm.envAddress("FEE_SIGNER") returns (address signer) {
-            return signer;
-        } catch {
-            return address(0);
         }
     }
 
@@ -111,12 +108,32 @@ contract DeployCreate3 is Script {
     }
 
     /// @notice Predicts the deployment address for a contract
+    /// @dev Uses the on-chain factory when available; otherwise reproduces the ZeframLou
+    ///      CREATE3 math locally so `preview()` works without an RPC.
     /// @param deployer The deployer address
     /// @param contractName The name of the contract
     /// @return The predicted deployment address
     function predictAddress(address deployer, string memory contractName) public view returns (address) {
         bytes32 salt = getSalt(contractName);
-        return ICREATE3Factory(CREATE3_FACTORY).getDeployed(deployer, salt);
+        if (isDeployed(CREATE3_FACTORY)) {
+            return ICREATE3Factory(CREATE3_FACTORY).getDeployed(deployer, salt);
+        }
+        return _predictCreate3Address(deployer, salt);
+    }
+
+    /// @dev Local reimplementation of ZeframLou CREATE3Factory.getDeployed. The factory namespaces
+    ///      salts by hashing `(deployer, salt)` before delegating to solmate's CREATE3 algorithm
+    ///      (CREATE2 proxy deploy, then CREATE with nonce 1 from the proxy).
+    function _predictCreate3Address(address deployer, bytes32 salt) internal pure returns (address) {
+        bytes32 hashedSalt = keccak256(abi.encode(deployer, salt));
+        address proxy = address(
+            uint160(
+                uint256(
+                    keccak256(abi.encodePacked(bytes1(0xFF), CREATE3_FACTORY, hashedSalt, CREATE3_PROXY_BYTECODE_HASH))
+                )
+            )
+        );
+        return address(uint160(uint256(keccak256(abi.encodePacked(hex"d694", proxy, hex"01")))));
     }
 
     /// @notice Checks if a contract is already deployed at an address
@@ -159,62 +176,81 @@ contract DeployCreate3 is Script {
 
         uint256 chainId = block.chainid;
         address deployer = msg.sender;
-        address owner = getOwnerAddress();
-        address _feeRecipient = getFeeRecipient();
-        uint96 _defaultFeeBps = getDefaultFeeBps();
-        address _feeSigner = getFeeSigner();
+        address routerOwner = getRouterOwner();
+        address routerLiquidator = getRouterLiquidator();
         string memory saltVersion = getSaltVersion();
 
         console2.log("Deploying contracts...");
         console2.log("Chain ID:", chainId);
         console2.log("Deployer:", deployer);
-        console2.log("Owner:", owner);
-        if (owner != deployer) {
-            console2.log("  (ownership will be transferred to Safe)");
+        console2.log("Router owner:", routerOwner);
+        if (routerOwner != deployer) {
+            console2.log("  (Router ownership set to provided multisig; acceptExecutor() must come from owner)");
         }
-        console2.log("Fee recipient:", _feeRecipient);
-        console2.log("Default fee bps:", uint256(_defaultFeeBps));
-        console2.log("Fee signer:", _feeSigner);
+        console2.log("Router liquidator:", routerLiquidator);
         console2.log("Salt version:", saltVersion);
         console2.log("CREATE3 Factory:", CREATE3_FACTORY);
         console2.log("");
 
-        result.deployed = new bool[](6);
+        result.deployed = new bool[](7);
 
         vm.startBroadcast();
 
-        // Deploy ExecutionProxy (pure-VM executor, no constructor args).
-        // Router wiring (setPendingExecutor / acceptExecutor) is added in INF-0013.
+        // Deploy ExecutionProxy (pure-VM executor, no constructor args per FR-11).
         bytes memory executionProxyCode = type(ExecutionProxy).creationCode;
         (result.executionProxy, result.deployed[0]) =
             deployIfNeeded(getSalt(EXECUTION_PROXY), executionProxyCode, EXECUTION_PROXY);
 
+        // Deploy Router with (owner, liquidator) constructor args. Router holds user approvals
+        // and the entire fee / slippage model; ExecutionProxy is forwarded funds + commands on each call.
+        bytes memory routerCode = abi.encodePacked(type(Router).creationCode, abi.encode(routerOwner, routerLiquidator));
+        (result.router, result.routerDeployed) = deployIfNeeded(getSalt(ROUTER), routerCode, ROUTER);
+        result.deployed[1] = result.routerDeployed;
+
         // Deploy stateless helpers (no constructor args)
-        (result.tupler, result.deployed[1]) = deployIfNeeded(getSalt(TUPLER), type(Tupler).creationCode, TUPLER);
+        (result.tupler, result.deployed[2]) = deployIfNeeded(getSalt(TUPLER), type(Tupler).creationCode, TUPLER);
 
-        (result.integer, result.deployed[2]) = deployIfNeeded(getSalt(INTEGER), type(Integer).creationCode, INTEGER);
+        (result.integer, result.deployed[3]) = deployIfNeeded(getSalt(INTEGER), type(Integer).creationCode, INTEGER);
 
-        (result.bytes32Helper, result.deployed[3]) =
+        (result.bytes32Helper, result.deployed[4]) =
             deployIfNeeded(getSalt(BYTES32), type(Bytes32).creationCode, BYTES32);
 
-        (result.blockchainInfo, result.deployed[4]) =
+        (result.blockchainInfo, result.deployed[5]) =
             deployIfNeeded(getSalt(BLOCKCHAIN_INFO), type(BlockchainInfo).creationCode, BLOCKCHAIN_INFO);
 
-        (result.arraysConverter, result.deployed[5]) =
+        (result.arraysConverter, result.deployed[6]) =
             deployIfNeeded(getSalt(ARRAYS_CONVERTER), type(ArraysConverter).creationCode, ARRAYS_CONVERTER);
+
+        // If the broadcasting account is also the Router owner, wire the pending executor in the
+        // same broadcast. The owner multisig must still submit a follow-up `acceptExecutor()` tx
+        // to activate the executor -- two-step transfer per FR-10.
+        if (deployer == routerOwner) {
+            Router(payable(result.router)).setPendingExecutor(result.executionProxy);
+            console2.log("Router.setPendingExecutor called with ExecutionProxy:", result.executionProxy);
+        } else {
+            console2.log("");
+            console2.log("[ACTION REQUIRED] Router owner must send two txs from the multisig:");
+            console2.log("  1) router.setPendingExecutor(executionProxy)");
+            console2.log("  2) router.acceptExecutor()");
+        }
 
         vm.stopBroadcast();
 
         // Summary
         console2.log("");
         console2.log("=== Deployment Summary ===");
+        console2.log("Router:        ", result.router);
+        console2.log("ExecutionProxy:", result.executionProxy);
         uint256 newlyDeployed = 0;
-        for (uint256 i = 0; i < 6; i++) {
+        for (uint256 i = 0; i < 7; i++) {
             if (result.deployed[i]) newlyDeployed++;
         }
         console2.log("Newly deployed:", newlyDeployed);
-        console2.log("Already deployed:", 6 - newlyDeployed);
-        console2.log("Final owner:", owner);
+        console2.log("Already deployed:", 7 - newlyDeployed);
+        console2.log("Router owner:", routerOwner);
+        console2.log("");
+        console2.log("[REMINDER] acceptExecutor() must be invoked by the Router owner multisig");
+        console2.log("           in a follow-up transaction before the Router can serve swaps.");
 
         return result;
     }
@@ -222,21 +258,27 @@ contract DeployCreate3 is Script {
     /// @notice Preview deployment addresses without deploying
     function preview() public view {
         address deployer = msg.sender;
-        address owner = getOwnerAddress();
+        address routerOwner = getRouterOwner();
+        address routerLiquidator = getRouterLiquidator();
         string memory saltVersion = getSaltVersion();
+        bool factoryAvailable = isDeployed(CREATE3_FACTORY);
 
         console2.log("=== Predicted Addresses ===");
         console2.log("Deployer:", deployer);
-        console2.log("Target owner:", owner);
-        if (owner != deployer) {
-            console2.log("  (ownership will be transferred to Safe)");
+        console2.log("Router owner:", routerOwner);
+        if (routerOwner != deployer) {
+            console2.log("  (Router ownership will be set to provided multisig)");
         }
+        console2.log("Router liquidator:", routerLiquidator);
         console2.log("Salt version:", saltVersion);
-        console2.log("CREATE3 Factory:", CREATE3_FACTORY, isDeployed(CREATE3_FACTORY) ? "(deployed)" : "(NOT DEPLOYED)");
+        console2.log("CREATE3 Factory:", CREATE3_FACTORY, factoryAvailable ? "(deployed)" : "(local-predict)");
         console2.log("");
 
         address execProxy = predictAddress(deployer, EXECUTION_PROXY);
         console2.log("ExecutionProxy:", execProxy, isDeployed(execProxy) ? "(deployed)" : "(not deployed)");
+
+        address router = predictAddress(deployer, ROUTER);
+        console2.log("Router:", router, isDeployed(router) ? "(deployed)" : "(not deployed)");
 
         address tupler = predictAddress(deployer, TUPLER);
         console2.log("Tupler:", tupler, isDeployed(tupler) ? "(deployed)" : "(not deployed)");

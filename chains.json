@@ -1,4 +1,6 @@
 {
+  "_note": "Router is the primary user-facing contract: it holds user ERC20 approvals and native ETH, applies the fee/slippage model, and delegates Weiroll execution to ExecutionProxy via the owner-set executor registry (setPendingExecutor / acceptExecutor). Production deploys must set ROUTER_OWNER (multisig) and ROUTER_LIQUIDATOR.",
+  "schemaVersion": 2,
   "chains": {
     "1": {
       "name": "ethereum",
@@ -51,6 +53,7 @@
   },
   "contracts": [
     "ExecutionProxy",
+    "Router",
     "Tupler",
     "Integer",
     "Bytes32",
