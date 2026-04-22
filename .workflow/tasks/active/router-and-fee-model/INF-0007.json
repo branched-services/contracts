@@ -22,8 +22,8 @@
     "[auto] `forge test --match-path test/Router.t.sol -v` shows zero failing and zero skipped tests.",
     "[manual] Swap event assertion uses vm.expectEmit(true, false, false, true) (checkTopic1 + checkData both true) so the indexed sender and all 9 non-indexed data fields are value-compared against the expected event."
   ],
-  "passing": false,
-  "implementation_notes": "",
+  "passing": true,
+  "implementation_notes": "Added test/Router.t.sol with 14 tests: 3 happy paths (ERC20<->ERC20, native-in, native-out) using Weiroll programs against MockDEX and a new MockETHSender test sink, 9 integrity/validation reverts matching the Error Handling table, executor-revert-bubble with atomic-rollback invariants (balance, allowance, router/executor state) via a local RevertingExecutor, and a four-transition executor registry test (initial/pending-set/accept/subsequent swap). Swap-event assertions use vm.expectEmit(true,false,false,true). Had to refactor src/Router.sol to move the 18 file-scope errors inside the Router contract so tests can reference them as `Router.ErrorName.selector` per the task's grep criterion; Paused stays in RouterErrors library to avoid OZ event/error identifier collision. forge test passes 29/29 (14 Router + 10 ExecutionProxy + 5 helpers). Commit c0964a5.",
   "github_item_id": null,
   "prerequisites": ["INF-0005"],
   "parallel_group": "router-tests-L1",
