@@ -10,40 +10,11 @@ import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.s
 
 import { IExecutor } from "src/interfaces/IExecutor.sol";
 
-// -------------------------------------------------------------------------
-// Router errors
-//
-// The eighteen errors below are declared at file scope and used directly by
-// the Router. A single error (`Paused`) lives in the `RouterErrors` library
-// below instead, because it shares its name with the `Paused(address)` event
-// inherited from OpenZeppelin's `Pausable` — Solidity rejects reusing an
-// identifier across kinds (event vs. error) within the same contract scope
-// and resolves an unqualified `Paused()` to the inherited event, which would
-// shadow a file-level error declaration at the revert site. Qualifying the
-// pause revert as `RouterErrors.Paused()` keeps the spec-named error without
-// renaming the OZ event.
-// -------------------------------------------------------------------------
-
-error ZeroInputAmount();
-error ZeroOutputQuote();
-error ZeroOutputMin();
-error InvalidSlippageBounds();
-error SelfSwap();
-error ProtocolFeeExceedsCap(uint256 bps);
-error PartnerFeeExceedsCap(uint256 bps);
-error InvalidPartnerRecipient();
-error ETHValueMismatch();
-error SlippageExceeded(address token, uint256 got, uint256 min);
-error ETHTransferFailed();
-error DuplicateToken(address token);
-error InputOutputIntersection(address token);
-error Unauthorized();
-error NotImplemented();
-error ExecutorNotSet();
-error ZeroAddress();
-error ArrayLengthMismatch();
-
 /// @notice Library carrying errors that would collide with identifiers inherited by Router.
+/// @dev `Paused` shares its name with the `Paused(address)` event inherited from OpenZeppelin's
+///      `Pausable`. Solidity rejects reusing an identifier across kinds (event vs. error) within
+///      the same contract scope and resolves an unqualified `Paused()` to the inherited event,
+///      so the error is defined here and referenced as `RouterErrors.Paused()` at the revert site.
 library RouterErrors {
     error Paused();
 }
@@ -62,6 +33,34 @@ library RouterErrors {
  */
 contract Router is Ownable2Step, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
+
+    // -------------------------------------------------------------------------
+    // Errors
+    //
+    // The eighteen errors below are contract-scoped so external callers (tests,
+    // off-chain consumers) can reference them as `Router.ErrorName.selector`.
+    // `Paused` lives in the `RouterErrors` library above to avoid the event/error
+    // identifier collision documented on that library.
+    // -------------------------------------------------------------------------
+
+    error ZeroInputAmount();
+    error ZeroOutputQuote();
+    error ZeroOutputMin();
+    error InvalidSlippageBounds();
+    error SelfSwap();
+    error ProtocolFeeExceedsCap(uint256 bps);
+    error PartnerFeeExceedsCap(uint256 bps);
+    error InvalidPartnerRecipient();
+    error ETHValueMismatch();
+    error SlippageExceeded(address token, uint256 got, uint256 min);
+    error ETHTransferFailed();
+    error DuplicateToken(address token);
+    error InputOutputIntersection(address token);
+    error Unauthorized();
+    error NotImplemented();
+    error ExecutorNotSet();
+    error ZeroAddress();
+    error ArrayLengthMismatch();
 
     // -------------------------------------------------------------------------
     // Constants
