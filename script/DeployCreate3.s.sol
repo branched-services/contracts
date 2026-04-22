@@ -183,31 +183,11 @@ contract DeployCreate3 is Script {
 
         vm.startBroadcast();
 
-        // Deploy ExecutionProxy (has constructor arg: owner)
-        // If already deployed and owner differs, we'll transfer ownership after
-        address predictedProxy = ICREATE3Factory(CREATE3_FACTORY).getDeployed(deployer, getSalt(EXECUTION_PROXY));
-        bool proxyAlreadyDeployed = isDeployed(predictedProxy);
-
-        bytes memory executionProxyCode = abi.encodePacked(
-            type(ExecutionProxy).creationCode, abi.encode(owner, _feeRecipient, _defaultFeeBps, _feeSigner)
-        );
+        // Deploy ExecutionProxy (pure-VM executor, no constructor args).
+        // Router wiring (setPendingExecutor / acceptExecutor) is added in INF-0013.
+        bytes memory executionProxyCode = type(ExecutionProxy).creationCode;
         (result.executionProxy, result.deployed[0]) =
             deployIfNeeded(getSalt(EXECUTION_PROXY), executionProxyCode, EXECUTION_PROXY);
-
-        // If proxy was already deployed and current owner is not target owner, transfer ownership
-        if (proxyAlreadyDeployed && owner != deployer) {
-            ExecutionProxy proxy = ExecutionProxy(payable(result.executionProxy));
-            address currentOwner = proxy.owner();
-            if (currentOwner == deployer) {
-                console2.log("Transferring ExecutionProxy ownership to:", owner);
-                proxy.transferOwnership(owner);
-                console2.log("Ownership transferred successfully");
-            } else if (currentOwner == owner) {
-                console2.log("ExecutionProxy already owned by target:", owner);
-            } else {
-                console2.log("Warning: ExecutionProxy owned by different address:", currentOwner);
-            }
-        }
 
         // Deploy stateless helpers (no constructor args)
         (result.tupler, result.deployed[1]) = deployIfNeeded(getSalt(TUPLER), type(Tupler).creationCode, TUPLER);

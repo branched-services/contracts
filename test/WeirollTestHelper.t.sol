@@ -82,7 +82,9 @@ contract MockWETHForHelper is MockERC20ForHelper {
 }
 
 /// @title WeirollTestHelperTest
-/// @notice Tests that WeirollTestHelper builds valid commands
+/// @notice Tests that WeirollTestHelper builds valid commands. Drives the command
+///         sequences through the pure-VM `ExecutionProxy.executePath` and asserts
+///         against balance / allowance side-effects.
 contract WeirollTestHelperTest is Test {
     ExecutionProxy public proxy;
     MockWETHForHelper public weth;
@@ -90,7 +92,7 @@ contract WeirollTestHelperTest is Test {
     MockERC20ForHelper public tokenB;
     MockDEX public dex;
 
-    address public receiver = makeAddr("receiver");
+    address public recipient = makeAddr("recipient");
 
     function setUp() public {
         weth = new MockWETHForHelper();
@@ -98,7 +100,7 @@ contract WeirollTestHelperTest is Test {
         tokenB = new MockERC20ForHelper("Token B", "TKNB", 18);
         dex = new MockDEX();
 
-        proxy = new ExecutionProxy(address(this), address(0), 0, address(0));
+        proxy = new ExecutionProxy();
 
         vm.deal(address(this), 100 ether);
     }
@@ -118,8 +120,9 @@ contract WeirollTestHelperTest is Test {
         commands[0] = WeirollTestHelper.buildMintCommand(address(tokenA), 0, 1);
         commands[1] = WeirollTestHelper.buildApproveCommand(address(tokenA), 2, 1);
 
-        proxy.executeSingle(commands, state, address(tokenA), amount, receiver, bytes(""));
+        proxy.executePath(commands, state);
 
+        assertEq(tokenA.balanceOf(address(proxy)), amount);
         assertEq(tokenA.allowance(address(proxy), address(dex)), amount);
     }
 
@@ -127,22 +130,21 @@ contract WeirollTestHelperTest is Test {
     function test_BuildTransferCommand() public {
         uint256 amount = 1000e18;
 
-        // Build: mint 2x to proxy, then transfer 1x to receiver via Weiroll
+        // Build: mint 2x to proxy, then transfer 1x to recipient via Weiroll
         bytes[] memory state = new bytes[](4);
         state[0] = WeirollTestHelper.encodeAddress(address(proxy));
         state[1] = WeirollTestHelper.encodeUint256(amount * 2);
-        state[2] = WeirollTestHelper.encodeAddress(receiver);
+        state[2] = WeirollTestHelper.encodeAddress(recipient);
         state[3] = WeirollTestHelper.encodeUint256(amount);
 
         bytes32[] memory commands = new bytes32[](2);
-        commands[0] = WeirollTestHelper.buildMintCommand(address(tokenA), 0, 1); // mint 2*amount
-        commands[1] = WeirollTestHelper.buildTransferCommand(address(tokenA), 2, 3); // transfer amount to receiver
+        commands[0] = WeirollTestHelper.buildMintCommand(address(tokenA), 0, 1);
+        commands[1] = WeirollTestHelper.buildTransferCommand(address(tokenA), 2, 3);
 
-        // delta = 2*amount - amount = amount (after Weiroll transfer)
-        proxy.executeSingle(commands, state, address(tokenA), amount, receiver, bytes(""));
+        proxy.executePath(commands, state);
 
-        // Receiver gets: 1x from Weiroll transfer + 1x from output transfer
-        assertEq(tokenA.balanceOf(receiver), amount * 2);
+        assertEq(tokenA.balanceOf(recipient), amount);
+        assertEq(tokenA.balanceOf(address(proxy)), amount);
     }
 
     /// @notice Test buildWETHDepositCommand with value call
@@ -154,9 +156,9 @@ contract WeirollTestHelperTest is Test {
         bytes32[] memory commands = new bytes32[](1);
         commands[0] = WeirollTestHelper.buildWethDepositCommand(address(weth), 0);
 
-        proxy.executeSingle{ value: amount }(commands, state, address(weth), amount, receiver, bytes(""));
+        proxy.executePath{ value: amount }(commands, state);
 
-        assertEq(weth.balanceOf(receiver), amount);
+        assertEq(weth.balanceOf(address(proxy)), amount);
     }
 
     /// @notice Test buildWETHWithdrawCommand
@@ -173,10 +175,10 @@ contract WeirollTestHelperTest is Test {
         bytes32[] memory commands = new bytes32[](1);
         commands[0] = WeirollTestHelper.buildWethWithdrawCommand(address(weth), 0);
 
-        uint256 receiverBalBefore = receiver.balance;
-        proxy.executeSingle(commands, state, proxy.NATIVE_ETH(), amount, receiver, bytes(""));
+        proxy.executePath(commands, state);
 
-        assertEq(receiver.balance, receiverBalBefore + amount);
+        assertEq(address(proxy).balance, amount);
+        assertEq(weth.balanceOf(address(proxy)), 0);
     }
 
     /// @notice Test MockDEX swap via Weiroll
@@ -201,10 +203,9 @@ contract WeirollTestHelperTest is Test {
             address(dex), bytes4(keccak256("swap(address,address,uint256,uint256)")), 2, 3, 1, 4
         );
 
-        // Output is tokenB (produced by swap, delta = amountOut)
-        proxy.executeSingle(commands, state, address(tokenB), amountOut, receiver, bytes(""));
+        proxy.executePath(commands, state);
 
-        assertEq(tokenB.balanceOf(receiver), amountOut);
+        assertEq(tokenB.balanceOf(address(proxy)), amountOut);
         assertEq(tokenA.balanceOf(address(dex)), amountIn);
     }
 }

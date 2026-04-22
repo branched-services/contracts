@@ -66,29 +66,16 @@ contract VerifyDeployment is Script {
         }
     }
 
-    /// @notice Verify ExecutionProxy owner
-    function verifyOwner(address proxyAddr, address expectedOwner) internal {
+    /// @notice Ownership lives on the Router after the Router/executor refactor.
+    ///         ExecutionProxy itself is stateless (FR-11), so there is nothing to verify
+    ///         on the executor. INF-0013 swaps this in for a Router ownership check.
+    function verifyOwner(address proxyAddr, address) internal {
         if (!hasCode(proxyAddr)) {
             fail("Owner check", "ExecutionProxy not deployed");
             return;
         }
-
-        ExecutionProxy proxy = ExecutionProxy(payable(proxyAddr));
-        address actualOwner = proxy.owner();
-
-        if (expectedOwner == address(0)) {
-            // Expected owner not set - just report current owner
-            console2.log("  Current owner:", actualOwner);
-            console2.log("  (Expected owner not configured in script)");
-            passCount++;
-        } else if (actualOwner == expectedOwner) {
-            pass(string.concat("Owner is ", vm.toString(expectedOwner)));
-        } else {
-            fail(
-                "Owner check",
-                string.concat("Expected ", vm.toString(expectedOwner), " but got ", vm.toString(actualOwner))
-            );
-        }
+        console2.log("  ExecutionProxy is stateless; ownership check deferred to Router (INF-0013).");
+        passCount++;
     }
 
     /// @notice Verify BlockchainInfo can read block number

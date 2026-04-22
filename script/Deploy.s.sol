@@ -10,10 +10,10 @@ contract DeployScript is Script {
 
         vm.startBroadcast();
 
-        // msg.sender becomes the owner
-        ExecutionProxy proxy = new ExecutionProxy(msg.sender, address(0), 0, address(0));
+        // ExecutionProxy is now a stateless pure-VM executor (no constructor args).
+        // Router deployment and Router<->executor wiring are handled in INF-0013.
+        ExecutionProxy proxy = new ExecutionProxy();
         console2.log("ExecutionProxy deployed at:", address(proxy));
-        console2.log("Owner:", msg.sender);
         console2.log("Chain ID:", chainId);
 
         vm.stopBroadcast();

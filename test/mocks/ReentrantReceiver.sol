@@ -1,147 +1,57 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import { ExecutionProxy } from "../../src/ExecutionProxy.sol";
 import { ITransferCallback } from "./AdversarialTokens.sol";
 
 /// @title ReentrantReceiver
-/// @notice Contract that attempts to re-enter ExecutionProxy on ETH receive
-/// @dev Used to test that ReentrancyGuard properly blocks re-entry attacks
+/// @notice Base reentrancy attacker used by Router adversarial tests (INF-0011).
+///         Records that a re-entry attempt happened via ETH `receive` or ERC20 transfer
+///         callback, but does not itself target a specific contract: downstream tests
+///         extend this (or wrap it) to invoke the Router's swap entry points inside
+///         the callback and assert the `nonReentrant` guard reverts the re-entry.
+/// @dev Intentionally target-agnostic after the Router refactor. The previous version
+///      called `ExecutionProxy.execute` / `executeSingle` directly; those entry points
+///      are gone under FR-11 (ExecutionProxy is a pure VM). Re-entrancy is now the
+///      Router's concern and is covered in `test/Router.Adversarial.t.sol`.
 contract ReentrantReceiver is ITransferCallback {
-    ExecutionProxy public target;
     bool public attackEnabled;
-    bool public attackViaExecute; // true = execute(), false = executeSingle()
     uint256 public attackCount;
     uint256 public maxAttacks = 1;
 
-    // Storage for attack parameters
-    bytes32[] public attackCommands;
-    bytes[] public attackState;
-    ExecutionProxy.OutputSpec[] public attackOutputs;
-    address public attackOutputToken;
-    uint256 public attackMinAmount;
-    address public attackReceiver;
-    bytes public attackFeeData;
-
-    // Track if attack was attempted
     bool public attackAttempted;
     bool public attackSucceeded;
 
-    constructor(address _target) {
-        target = ExecutionProxy(payable(_target));
+    /// @notice Enable/disable the re-entry attempt. Off by default so accidental
+    ///         ETH transfers in setup do not count as attacks.
+    function setAttackEnabled(bool enabled) external {
+        attackEnabled = enabled;
     }
 
-    /// @notice Configure for execute() re-entry attack
-    function setupExecuteAttack(
-        bytes32[] calldata commands,
-        bytes[] calldata state,
-        ExecutionProxy.OutputSpec[] calldata outputs,
-        address receiver,
-        bytes calldata feeData
-    ) external {
-        delete attackCommands;
-        delete attackState;
-        delete attackOutputs;
-
-        for (uint256 i = 0; i < commands.length; i++) {
-            attackCommands.push(commands[i]);
-        }
-        for (uint256 i = 0; i < state.length; i++) {
-            attackState.push(state[i]);
-        }
-        for (uint256 i = 0; i < outputs.length; i++) {
-            attackOutputs.push(outputs[i]);
-        }
-        attackReceiver = receiver;
-        attackFeeData = feeData;
-        attackViaExecute = true;
-        attackEnabled = true;
-    }
-
-    /// @notice Configure for executeSingle() re-entry attack
-    function setupExecuteSingleAttack(
-        bytes32[] calldata commands,
-        bytes[] calldata state,
-        address outputToken,
-        uint256 minAmount,
-        address receiver,
-        bytes calldata feeData
-    ) external {
-        delete attackCommands;
-        delete attackState;
-
-        for (uint256 i = 0; i < commands.length; i++) {
-            attackCommands.push(commands[i]);
-        }
-        for (uint256 i = 0; i < state.length; i++) {
-            attackState.push(state[i]);
-        }
-        attackOutputToken = outputToken;
-        attackMinAmount = minAmount;
-        attackReceiver = receiver;
-        attackFeeData = feeData;
-        attackViaExecute = false;
-        attackEnabled = true;
-    }
-
-    /// @notice Disable the attack
-    function disableAttack() external {
-        attackEnabled = false;
-    }
-
-    /// @notice Set maximum number of re-entry attempts
+    /// @notice Cap the number of re-entry attempts so a bounded attack plays out in tests.
     function setMaxAttacks(uint256 _maxAttacks) external {
         maxAttacks = _maxAttacks;
     }
 
-    /// @notice Reset attack state
+    /// @notice Reset the attack ledger between test cases.
     function resetAttackState() external {
         attackAttempted = false;
         attackSucceeded = false;
         attackCount = 0;
     }
 
-    /// @notice Called when ETH is received - attempts re-entry if enabled
     receive() external payable {
-        if (attackEnabled && attackCount < maxAttacks) {
-            attackCount++;
-            attackAttempted = true;
-
-            // Attempt re-entry
-            try this._executeAttack() {
-                attackSucceeded = true;
-            } catch {
-                // Attack was blocked (expected behavior)
-                attackSucceeded = false;
-            }
-        }
+        _recordAttempt();
     }
 
-    /// @notice External function to execute attack (allows try/catch)
-    function _executeAttack() external {
-        require(msg.sender == address(this), "Only self");
-
-        if (attackViaExecute) {
-            target.execute(attackCommands, attackState, attackOutputs, attackReceiver, attackFeeData);
-        } else {
-            target.executeSingle(
-                attackCommands, attackState, attackOutputToken, attackMinAmount, attackReceiver, attackFeeData
-            );
-        }
-    }
-
-    /// @notice Implement ITransferCallback for token callback re-entry tests
+    /// @inheritdoc ITransferCallback
     function onTokenTransfer(address, address, uint256) external override {
+        _recordAttempt();
+    }
+
+    function _recordAttempt() internal {
         if (attackEnabled && attackCount < maxAttacks) {
             attackCount++;
             attackAttempted = true;
-
-            // Attempt re-entry via token callback
-            try this._executeAttack() {
-                attackSucceeded = true;
-            } catch {
-                attackSucceeded = false;
-            }
         }
     }
 }
