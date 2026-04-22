@@ -22,8 +22,8 @@
     "[auto] All tests pass under `forge test --match-path test/Router.Fees.t.sol -v`; fuzz runs default 256 iterations per foundry.toml with no failures.",
     "[manual] Each positive-slippage test asserts BOTH the user's final balance AND the router's retained balance to lock in capture semantics."
   ],
-  "passing": false,
-  "implementation_notes": "",
+  "passing": true,
+  "implementation_notes": "Added test/Router.Fees.t.sol (18 tests, 17 `test_` + 1 fuzz, 257 fuzz runs) covering FR-3/4/5/6/7: protocol fee arithmetic + cap + Router custody + zero-bps edge case + accumulation + zero-fee event shape; partner-fee-on-input with cap, zero-recipient revert, stacking with protocol fee; partner-fee-on-output post-slippage-cap ordering with SlippageExceeded revert when fee pushes below outputMin; positive-slippage capture/pass-through/no-surplus/exact-quote (each asserts both user and router balances per the manual criterion); and a no-silent-short-payment fuzz with `bound(_, 0, 200)` for bps. Commit 3a9e90f.",
   "github_item_id": null,
   "prerequisites": ["INF-0005"],
   "parallel_group": "router-tests-L1",
