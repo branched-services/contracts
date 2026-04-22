@@ -20,8 +20,8 @@
     "[auto] Test file compiles: `forge build --match-path test/ExecutionProxy.t.sol` returns no errors.",
     "[manual] At least one retained test exercises a realistic Weiroll program (mint+approve+swap via MockDEX) to prove the VM still executes end-to-end."
   ],
-  "passing": false,
-  "implementation_notes": "",
+  "passing": true,
+  "implementation_notes": "Rewrote test/ExecutionProxy.t.sol from 1926 LOC down to ~280 LOC of Weiroll-flow tests that all exercise the new `proxy.executePath(commands, state)` entry point and assert via token balanceOf. Deleted every fee test (Step 6 block), slippage test, rescue test, OutputSpec/execute/executeSingle call, reentrancy test targeting the executor, and the fee-signing helpers (_signFeeOverrideForProxy, _computeExecutionHashSingle, _computeExecutionHashMulti, _buildMintProgramForProxy, feeSignerPk/feeSignerAddr). Retained and restated tests cover mint-to-recipient, approve+transfer, MockDEX swap (mint+approve+swap, the FR-11 manual criterion), WETH wrap, WETH unwrap, multi-hop A->B->C, receive()/fallback() ETH acceptance, and a fuzz test. Ripple edits: test/WeirollTestHelper.t.sol was ported to executePath the same way; test/mocks/ReentrantReceiver.sol was stripped of its ExecutionProxy targeting (INF-0011 will extend it against the Router); script/Deploy.s.sol, script/DeployCreate3.s.sol, and script/Verify.s.sol were updated to the zero-arg constructor and had the owner()/transferOwnership() calls removed so `forge test` can compile the whole project (full Router wiring is INF-0013's scope). All 15 tests pass (10 ExecutionProxyTest + 5 WeirollTestHelperTest); forge fmt --check is clean. Commit: 9ae7190.",
   "github_item_id": null,
   "prerequisites": ["INF-0002"],
   "parallel_group": null,
