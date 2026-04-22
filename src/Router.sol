@@ -398,6 +398,248 @@ contract Router is Ownable2Step, Pausable, ReentrancyGuard {
     }
 
     // -------------------------------------------------------------------------
+    // Internal multi-swap helpers
+    // -------------------------------------------------------------------------
+
+    /// @dev O(n^2) pairwise scan that reverts `DuplicateToken(t)` on the first collision. Used
+    ///      to enforce FR-8 for both the inputs array and the outputs array of a multi-swap and
+    ///      also doubles as the guard that prevents more than one NATIVE_ETH_SENTINEL input
+    ///      slot from appearing in `swapMulti`.
+    function _requireNoDuplicates(address[] memory tokens) internal pure {
+        uint256 n = tokens.length;
+        for (uint256 i = 0; i < n; ++i) {
+            for (uint256 j = i + 1; j < n; ++j) {
+                if (tokens[i] == tokens[j]) revert DuplicateToken(tokens[i]);
+            }
+        }
+    }
+
+    /// @dev O(n*m) scan that reverts `InputOutputIntersection(t)` on the first overlap. Together
+    ///      with `_requireNoDuplicates` this closes the FR-8 loop: every token in a multi-swap
+    ///      sits in exactly one slot, so balance-diff accounting is unambiguous.
+    function _requireNoIntersection(address[] memory inputs, address[] memory outputs) internal pure {
+        uint256 nIn = inputs.length;
+        uint256 nOut = outputs.length;
+        for (uint256 i = 0; i < nIn; ++i) {
+            for (uint256 j = 0; j < nOut; ++j) {
+                if (inputs[i] == outputs[j]) revert InputOutputIntersection(inputs[i]);
+            }
+        }
+    }
+
+    /// @dev Validation for `swapMulti`. Mirrors `_validateSwap` checks field-by-field (executor
+    ///      set, fee caps, partner recipient, slippage bounds) but expanded over the input and
+    ///      output arrays. Performs array-length parity, per-element zero checks, duplicate /
+    ///      intersection rejection, and msg.value reconciliation against the (at most one)
+    ///      NATIVE_ETH_SENTINEL input slot. Errors are identical to the single-swap validator
+    ///      so off-chain consumers can share one decoder.
+    function _validateMultiSwap(MultiSwapParams calldata p) internal view {
+        if (executor == address(0)) revert ExecutorNotSet();
+
+        uint256 nIn = p.inputTokens.length;
+        uint256 nOut = p.outputTokens.length;
+
+        if (nIn == 0) revert ZeroInputAmount();
+        if (nOut == 0) revert ZeroOutputQuote();
+        if (nIn != p.inputAmounts.length) revert ArrayLengthMismatch();
+        if (nOut != p.outputQuotes.length) revert ArrayLengthMismatch();
+        if (nOut != p.outputMins.length) revert ArrayLengthMismatch();
+
+        if (p.protocolFeeBps > MAX_PROTOCOL_FEE_BPS) revert ProtocolFeeExceedsCap(p.protocolFeeBps);
+        if (p.partnerFeeBps > MAX_PARTNER_FEE_BPS) revert PartnerFeeExceedsCap(p.partnerFeeBps);
+        if (p.partnerFeeBps > 0 && p.partnerRecipient == address(0)) revert InvalidPartnerRecipient();
+
+        for (uint256 i = 0; i < nIn; ++i) {
+            if (p.inputAmounts[i] == 0) revert ZeroInputAmount();
+        }
+        for (uint256 j = 0; j < nOut; ++j) {
+            if (p.outputQuotes[j] == 0) revert ZeroOutputQuote();
+            if (p.outputMins[j] == 0) revert ZeroOutputMin();
+            if (p.outputMins[j] > p.outputQuotes[j]) revert InvalidSlippageBounds();
+        }
+
+        _requireNoDuplicates(p.inputTokens);
+        _requireNoDuplicates(p.outputTokens);
+        _requireNoIntersection(p.inputTokens, p.outputTokens);
+
+        // msg.value reconciliation. After the duplicate check there is at most one native input
+        // slot; if it exists, msg.value must equal its amount. Otherwise msg.value must be zero.
+        bool hasNative;
+        uint256 nativeAmount;
+        for (uint256 i = 0; i < nIn; ++i) {
+            if (p.inputTokens[i] == NATIVE_ETH_SENTINEL) {
+                hasNative = true;
+                nativeAmount = p.inputAmounts[i];
+                break;
+            }
+        }
+        if (hasNative) {
+            if (msg.value != nativeAmount) revert ETHValueMismatch();
+        } else if (msg.value != 0) {
+            revert ETHValueMismatch();
+        }
+    }
+
+    /// @dev Pulls all inputs via balance-diff, skims protocol + input-side partner fees, and
+    ///      stages the remainder for the executor. Native-ETH inputs are held on the Router
+    ///      (already received via `msg.value`) and their forwarded amount is accumulated in
+    ///      `nativeForwardAmount` to pass as `msg.value` on the single executor call. ERC20
+    ///      inputs are `safeTransfer`red to the executor directly.
+    function _pullInputs(MultiSwapParams calldata params)
+        internal
+        returns (
+            uint256 nativeForwardAmount,
+            uint256 totalProtocolFees,
+            uint256 totalInputPartnerFees,
+            uint256 inputAmountSum,
+            address effectiveInputToken
+        )
+    {
+        uint256 n = params.inputTokens.length;
+        effectiveInputToken = params.inputTokens[0];
+        address exec = executor;
+        for (uint256 i = 0; i < n; ++i) {
+            address token = params.inputTokens[i];
+            uint256 amount = params.inputAmounts[i];
+            inputAmountSum += amount;
+
+            uint256 pulled = _pullInput(token, amount);
+            uint256 protocolFee = (pulled * params.protocolFeeBps) / 10_000;
+            uint256 inputPartnerFee = params.partnerFeeOnOutput ? 0 : (pulled * params.partnerFeeBps) / 10_000;
+            if (inputPartnerFee > 0) {
+                _transferOut(token, params.partnerRecipient, inputPartnerFee);
+            }
+
+            totalProtocolFees += protocolFee;
+            totalInputPartnerFees += inputPartnerFee;
+            uint256 forward = pulled - protocolFee - inputPartnerFee;
+
+            if (token == NATIVE_ETH_SENTINEL) {
+                nativeForwardAmount = forward;
+                effectiveInputToken = NATIVE_ETH_SENTINEL;
+            } else {
+                IERC20(token).safeTransfer(exec, forward);
+            }
+        }
+    }
+
+    /// @dev For each output token, measures balance delta against the pre-executor snapshot,
+    ///      applies positive-slippage capping at `outputQuotes[j]` when pass-through is off,
+    ///      applies the output-side partner fee, enforces `outputMins[j]`, and pays the
+    ///      recipient. Mirrors step ordering from `_executeSwap` so single- and multi-swap
+    ///      share the same Behavior-Spec sequence.
+    function _settleOutputs(MultiSwapParams calldata params, uint256[] memory outputBefore)
+        internal
+        returns (uint256[] memory amountsOut, uint256[] memory positiveSlippages, uint256[] memory outputPartnerFees)
+    {
+        uint256 nOut = params.outputTokens.length;
+        amountsOut = new uint256[](nOut);
+        positiveSlippages = new uint256[](nOut);
+        outputPartnerFees = new uint256[](nOut);
+
+        for (uint256 j = 0; j < nOut; ++j) {
+            address token = params.outputTokens[j];
+            uint256 amt = _balanceOf(token) - outputBefore[j];
+
+            if (!params.passPositiveSlippageToUser && amt > params.outputQuotes[j]) {
+                positiveSlippages[j] = amt - params.outputQuotes[j];
+                amt = params.outputQuotes[j];
+            }
+
+            if (params.partnerFeeOnOutput && params.partnerFeeBps > 0) {
+                uint256 fee = (amt * params.partnerFeeBps) / 10_000;
+                outputPartnerFees[j] = fee;
+                amt -= fee;
+                _transferOut(token, params.partnerRecipient, fee);
+            }
+
+            if (amt < params.outputMins[j]) {
+                revert SlippageExceeded(token, amt, params.outputMins[j]);
+            }
+
+            _transferOut(token, params.recipient, amt);
+            amountsOut[j] = amt;
+        }
+    }
+
+    /// @dev Header-like context bundle for `_emitMultiSwaps` / `_emitOneMultiSwap`. Exists only
+    ///      to collapse would-be top-of-stack params in the emit path; no storage, no ABI impact.
+    struct _MultiEmitCtx {
+        address effectiveInputToken;
+        uint256 inputAmountSum;
+        uint256 totalProtocolFees;
+        uint256 totalInputPartnerFees;
+    }
+
+    /// @dev Emits one `Swap` event per output. Keeps the FR-17 event shape identical to the
+    ///      single-swap case; pro-rata attribution policy is equal-split of aggregate input-
+    ///      side fees across outputs, with the remainder (from integer division) attributed
+    ///      to the final output so sums across events reconstruct totals exactly. See the
+    ///      NatSpec on `swapMulti` for the attribution contract.
+    function _emitMultiSwaps(
+        MultiSwapParams calldata params,
+        _MultiEmitCtx memory ctx,
+        uint256[] memory amountsOut,
+        uint256[] memory positiveSlippages,
+        uint256[] memory outputPartnerFees
+    ) internal {
+        uint256 nOut = params.outputTokens.length;
+        for (uint256 j = 0; j < nOut; ++j) {
+            _emitSwap10(
+                ctx.effectiveInputToken,
+                ctx.inputAmountSum,
+                params.outputTokens[j],
+                amountsOut[j] + outputPartnerFees[j] + positiveSlippages[j],
+                amountsOut[j],
+                _splitFeeProRata(ctx.totalProtocolFees, j, nOut),
+                _splitFeeProRata(ctx.totalInputPartnerFees, j, nOut) + outputPartnerFees[j],
+                positiveSlippages[j],
+                params.partnerRecipient
+            );
+        }
+    }
+
+    /// @dev Pro-rata split of an aggregate fee total across `nOut` outputs. The final output
+    ///      absorbs the integer-division remainder so summing across events reconstructs the
+    ///      total exactly. Extracted to keep `_emitOneMultiSwap` under the EVM stack limit.
+    function _splitFeeProRata(uint256 total, uint256 jIdx, uint256 nOut) internal pure returns (uint256) {
+        uint256 base = total / nOut;
+        if (jIdx == nOut - 1) return base + (total - base * nOut);
+        return base;
+    }
+
+    /// @dev Final-mile emit helper that takes the nine non-sender fields of the `Swap` event
+    ///      as primitive args and does nothing else. Ensures the emit statement runs in a
+    ///      function scope with exactly ten stack slots live (nine params plus the implicit
+    ///      `msg.sender`), side-stepping the EVM's 16-slot DUP/SWAP limit that otherwise
+    ///      trips on the ten-field `Swap` event in any helper that also holds a calldata
+    ///      params ref and a memory ctx ref.
+    function _emitSwap10(
+        address _inputToken,
+        uint256 _inputAmount,
+        address _outputToken,
+        uint256 _amountOut,
+        uint256 _amountToUser,
+        uint256 _protocolFee,
+        uint256 _partnerFee,
+        uint256 _positiveSlippage,
+        address _partnerRecipient
+    ) internal {
+        emit Swap(
+            msg.sender,
+            _inputToken,
+            _inputAmount,
+            _outputToken,
+            _amountOut,
+            _amountToUser,
+            _protocolFee,
+            _partnerFee,
+            _positiveSlippage,
+            _partnerRecipient
+        );
+    }
+
+    // -------------------------------------------------------------------------
     // Swap entry points
     // -------------------------------------------------------------------------
 
@@ -411,19 +653,67 @@ contract Router is Ownable2Step, Pausable, ReentrancyGuard {
         amountOut = _executeSwap(params, pulled);
     }
 
-    /// @notice Multi-input, multi-output swap. Body lands in INF-0006.
-    function swapMulti(
-        MultiSwapParams calldata /* params */
-    )
-        external
-        payable
-        nonReentrant
-        whenNotPaused
-        returns (
-            uint256[] memory /* amountsOut */
-        )
-    {
-        revert NotImplemented();
+    /**
+     * @notice Multi-input, multi-output atomic swap. Pulls every input, deducts protocol and
+     *         (optionally input-side) partner fees on each, forwards the remainder to the
+     *         executor in a single `executePath` call, snapshots every output before/after,
+     *         applies per-output positive-slippage capping and (optionally output-side) partner
+     *         fees, enforces each `outputMins[j]`, and pays every output to `recipient`. Emits
+     *         one `Swap` event per output.
+     * @dev Pro-rata fee attribution policy: input-side `protocolFee` and `partnerFee` totals
+     *      are split equally across outputs in the emitted events; the final output absorbs the
+     *      integer-division remainder so the sum across events reconstructs the totals exactly.
+     *      Output-side partner fees are attributed to their specific output. This policy lets
+     *      off-chain indexers credit attribution without changing the FR-17 event shape.
+     */
+    // forgefmt: disable-next-item
+    function swapMulti(MultiSwapParams calldata params) external payable nonReentrant whenNotPaused returns (uint256[] memory amountsOut) {
+        _validateMultiSwap(params);
+
+        (
+            uint256 nativeForwardAmount,
+            uint256 totalProtocolFees,
+            uint256 totalInputPartnerFees,
+            uint256 inputAmountSum,
+            address effectiveInputToken
+        ) = _pullInputs(params);
+
+        uint256 nOut = params.outputTokens.length;
+        uint256[] memory outputBefore = new uint256[](nOut);
+        for (uint256 j = 0; j < nOut; ++j) {
+            outputBefore[j] = _balanceOf(params.outputTokens[j]);
+        }
+
+        if (nativeForwardAmount > 0) {
+            (bool ok,) = executor.call{ value: nativeForwardAmount }(
+                abi.encodeCall(IExecutor.executePath, (params.weirollCommands, params.weirollState))
+            );
+            if (!ok) {
+                assembly {
+                    returndatacopy(0, 0, returndatasize())
+                    revert(0, returndatasize())
+                }
+            }
+        } else {
+            IExecutor(executor).executePath(params.weirollCommands, params.weirollState);
+        }
+
+        uint256[] memory positiveSlippages;
+        uint256[] memory outputPartnerFees;
+        (amountsOut, positiveSlippages, outputPartnerFees) = _settleOutputs(params, outputBefore);
+
+        _emitMultiSwaps(
+            params,
+            _MultiEmitCtx({
+                effectiveInputToken: effectiveInputToken,
+                inputAmountSum: inputAmountSum,
+                totalProtocolFees: totalProtocolFees,
+                totalInputPartnerFees: totalInputPartnerFees
+            }),
+            amountsOut,
+            positiveSlippages,
+            outputPartnerFees
+        );
     }
 
     // -------------------------------------------------------------------------
