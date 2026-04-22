@@ -21,8 +21,8 @@
     "[manual] invariant_AccountingConservation asserts, for each token T in the fixed token set: ghost_userReceived[T] + ghost_protocolFees[T] + ghost_partnerFees[T] + ghost_positiveSlippage[T] == ghost_executorOutflow[T] + ghost_executorInflow[T] rearranged to match the spec's `sumUserReceived + protocolFeesAccrued + partnerFeesPaid + positiveSlippageRetained == aggregateBalanceDiffOfExecutor`, with a comment pointing at the spec's §Non-Functional Requirements invariant line.",
     "[manual] Handler covers both swap() and swapMulti() paths and exercises the pass-through flag and partnerFeeOnOutput flag in different calls."
   ],
-  "passing": false,
-  "implementation_notes": "",
+  "passing": true,
+  "implementation_notes": "Added test/helpers/RouterHandler.sol (invariant handler fuzzing swap()/swapMulti() across 4 ERC20s + NATIVE_ETH_SENTINEL, 3 rotating users, bps bounded [0,200], both partnerFeeOnOutput values and pass-through flag) and test/Router.Invariant.t.sol asserting three invariants: accounting conservation (two-role split that reconstructs spec's aggregate equation), no residual user input in Router beyond protocol fees + positive slippage, and no-dust-lost closure. All 3 invariants pass at 256 runs / depth 15 (3840 calls per invariant). Manual criterion [1]: invariant_AccountingConservation's NatSpec explicitly cites spec §Non-Functional Requirements and derives the aggregate from the two per-role equations. Manual criterion [2]: handler's swapRandom exercises swap() and swapMultiRandom exercises swapMulti(); seed bits toggle passPositiveSlippageToUser and partnerFeeOnOutput independently (ghost_passThroughUsed / ghost_partnerOnOutputUsed counters confirm coverage). Commit 12c09eb.",
   "github_item_id": null,
   "prerequisites": ["INF-0006"],
   "parallel_group": "router-tests-L2",
