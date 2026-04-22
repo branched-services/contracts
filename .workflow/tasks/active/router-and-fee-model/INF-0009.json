@@ -20,8 +20,8 @@
     "[auto] All tests pass under `forge test --match-path test/Router.MultiSwap.t.sol -v` with zero failures.",
     "[manual] Pro-rata assertion matches the attribution policy documented in Router.sol NatSpec above swapMulti (if equal-split, each output carries sum/n; if proportional, each carries quote-weighted share)."
   ],
-  "passing": false,
-  "implementation_notes": "",
+  "passing": true,
+  "implementation_notes": "Added test/Router.MultiSwap.t.sol with 12 tests covering swapMulti happy paths (2-in/2-out with per-output Swap event assertions; native ETH as one of two inputs verifying msg.value forwarded to executor on the unified executePath call), duplicate/intersection rejection (DuplicateToken with offending address for input/output dups, InputOutputIntersection on overlap), array-length parity and zero-validation reverts (ArrayLengthMismatch, ZeroInputAmount on empty/zero-amount inputs, ZeroOutputQuote on empty outputs), and pro-rata fee distribution (200 bps protocol fee retained per-input-token in Router; output-side partner fee 100 bps attributed per-output yielding 10e18 of C and 5e18 of D for outputs [1000e18, 500e18]; per-output slippage check reverts SlippageExceeded with the offending output token). Manual: pro-rata assertion matches Router.sol NatSpec policy -- input-side fees retained per-token and output-side fees attributed per-output. All 12 tests pass; full suite (59 tests) green. Commit 1a956a0.",
   "github_item_id": null,
   "prerequisites": ["INF-0006"],
   "parallel_group": "router-tests-L2",
