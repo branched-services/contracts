@@ -20,8 +20,8 @@
     "[auto] All tests pass under `forge test --match-path test/Router.Adversarial.t.sol -v` with zero failures.",
     "[manual] Reentrancy test wraps the inner swap call in try/catch, asserts catch branch recorded the ReentrancyGuardReentrantCall selector, and asserts after the outer tx that router.balanceOf(inputToken) and router.balanceOf(outputToken) are exactly the values expected by the non-reentrant accounting (no inflation from the attempted re-entry)."
   ],
-  "passing": false,
-  "implementation_notes": "",
+  "passing": true,
+  "implementation_notes": "Added test/Router.Adversarial.t.sol with 9 tests covering FR-15 balance-diff accounting (fee-on-transfer in/out, rebasing up/down, no-return USDT-style, false-returning in/out) and FR-16 reentrancy guard (callback token and ETH receive paths). Introduced test/mocks/RouterReentrantReceiver.sol that wraps router.swap() in try/catch inside onTokenTransfer and receive() to record the ReentrancyGuardReentrantCall selector while the outer tx completes without drain. Commit 079ac70.",
   "github_item_id": null,
   "prerequisites": ["INF-0005"],
   "parallel_group": "router-tests-L1",
