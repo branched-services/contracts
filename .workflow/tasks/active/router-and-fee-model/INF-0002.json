@@ -22,8 +22,8 @@
     "[manual] Contract still inherits Weiroll VM and implements IExecutor; no admin functions, no constructor.",
     "[manual] receive() and fallback() remain payable so Router.call{value:}(executePath(...)) can forward native ETH."
   ],
-  "passing": false,
-  "implementation_notes": "",
+  "passing": true,
+  "implementation_notes": "Rewrote src/ExecutionProxy.sol (342 -> 40 LOC) to a stateless `contract ExecutionProxy is VM, IExecutor` whose sole entry point is `executePath(bytes32[] calldata commands, bytes[] calldata state) external payable override { _execute(commands, state); }` alongside `receive()`/`fallback()` for native ETH forwarding. All Ownable/EIP712/ECDSA/ReentrancyGuard/SafeERC20 imports, fee/slippage state, events, errors, setters, rescue(), execute()/executeSingle(), and internal helpers were deleted; NATIVE_ETH_SENTINEL is kept as a no-visibility compile-time constant so the storage-layout grep stays empty. Storage layout inspects as empty, bytecode is 7293 hex chars (well under the 12000 FR-11 bound), and `forge build --skip 'test/*' --skip 'script/*'` compiles src/ExecutionProxy.sol cleanly; the broader `forge build` and test/mocks/ReentrantReceiver + script/*.s.sol fail to compile until INF-0003 (tests) and INF-0013 (deploy scripts) land, exactly as the task step notes document. Commit: 8ca8e83.",
   "github_item_id": null,
   "prerequisites": ["INF-0001"],
   "parallel_group": null,
