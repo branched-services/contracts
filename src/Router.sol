@@ -245,22 +245,170 @@ contract Router is Ownable2Step, Pausable, ReentrancyGuard {
     }
 
     // -------------------------------------------------------------------------
-    // Swap entry points (scaffold)
+    // Internal swap helpers
     // -------------------------------------------------------------------------
 
-    /// @notice Single-input, single-output swap. Body lands in INF-0005.
-    function swap(
-        SwapParams calldata /* params */
-    )
-        external
-        payable
-        nonReentrant
-        whenNotPaused
-        returns (
-            uint256 /* amountOut */
-        )
+    /// @dev Validation common to both user-initiated `swap` and liquidator-initiated
+    ///      `swapRouterFunds`. Mirrors the Error Handling table in the spec; the only
+    ///      check left out is the msg.value / native-input reconciliation, which is
+    ///      applied in `_validateSwap` for the user-facing path but skipped for the
+    ///      Router-funded path (Router already holds the input balance).
+    function _validateSwapCommon(SwapParams calldata p) internal view {
+        if (executor == address(0)) revert ExecutorNotSet();
+        if (p.inputAmount == 0) revert ZeroInputAmount();
+        if (p.outputQuote == 0) revert ZeroOutputQuote();
+        if (p.outputMin == 0) revert ZeroOutputMin();
+        if (p.outputMin > p.outputQuote) revert InvalidSlippageBounds();
+        if (p.inputToken == p.outputToken) revert SelfSwap();
+        if (p.protocolFeeBps > MAX_PROTOCOL_FEE_BPS) revert ProtocolFeeExceedsCap(p.protocolFeeBps);
+        if (p.partnerFeeBps > MAX_PARTNER_FEE_BPS) revert PartnerFeeExceedsCap(p.partnerFeeBps);
+        if (p.partnerFeeBps > 0 && p.partnerRecipient == address(0)) revert InvalidPartnerRecipient();
+    }
+
+    /// @dev Full validation for the user-facing `swap` entry point: common checks plus the
+    ///      msg.value reconciliation (exactly `inputAmount` for native input, exactly 0 for ERC20).
+    function _validateSwap(SwapParams calldata p) internal view {
+        _validateSwapCommon(p);
+        if (p.inputToken == NATIVE_ETH_SENTINEL) {
+            if (msg.value != p.inputAmount) revert ETHValueMismatch();
+        } else if (msg.value != 0) {
+            revert ETHValueMismatch();
+        }
+    }
+
+    /// @dev Router-balance accessor that handles the native ETH sentinel uniformly with ERC20s.
+    function _balanceOf(address token) internal view returns (uint256) {
+        if (token == NATIVE_ETH_SENTINEL) return address(this).balance;
+        return IERC20(token).balanceOf(address(this));
+    }
+
+    /// @dev Pull `amount` of `token` from the caller into the Router and return the balance delta
+    ///      actually received. For native ETH the caller has already forwarded the amount via
+    ///      `msg.value` (validated in `_validateSwap`), so `amount` is returned unchanged. For
+    ///      ERC20s the before/after measurement lets fee-on-transfer tokens flow through the rest
+    ///      of the swap using their post-fee amount (FR-15).
+    function _pullInput(address token, uint256 amount) internal returns (uint256 pulled) {
+        if (token == NATIVE_ETH_SENTINEL) {
+            return amount;
+        }
+        uint256 balanceBefore = IERC20(token).balanceOf(address(this));
+        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+        return IERC20(token).balanceOf(address(this)) - balanceBefore;
+    }
+
+    /// @dev Pay `amount` of `token` out to `to`. No-ops on zero amount (useful when partner or
+    ///      positive-slippage paths are inactive). Native ETH uses `.call{value}` with full gas
+    ///      forwarding so multisig receivers work; failure reverts `ETHTransferFailed`.
+    function _transferOut(address token, address to, uint256 amount) internal {
+        if (amount == 0) return;
+        if (token == NATIVE_ETH_SENTINEL) {
+            (bool ok,) = to.call{ value: amount }("");
+            if (!ok) revert ETHTransferFailed();
+        } else {
+            IERC20(token).safeTransfer(to, amount);
+        }
+    }
+
+    /// @dev Forward the remaining input to the executor and invoke `executePath`. ERC20 paths use
+    ///      a standard `safeTransfer` followed by a direct interface call (natural revert bubble).
+    ///      Native ETH paths encode the call via `abi.encodeCall` and pass `value` through the
+    ///      low-level call; a revert inside the executor is rethrown with its original returndata.
+    function _forwardToExecutor(address token, uint256 amount, bytes32[] calldata commands, bytes[] calldata state)
+        internal
     {
-        revert NotImplemented();
+        address exec = executor;
+        if (token == NATIVE_ETH_SENTINEL) {
+            (bool ok,) = exec.call{ value: amount }(abi.encodeCall(IExecutor.executePath, (commands, state)));
+            if (!ok) {
+                assembly {
+                    returndatacopy(0, 0, returndatasize())
+                    revert(0, returndatasize())
+                }
+            }
+        } else {
+            IERC20(token).safeTransfer(exec, amount);
+            IExecutor(exec).executePath(commands, state);
+        }
+    }
+
+    /// @dev Core swap sequence shared by `swap` and `swapRouterFunds`. Implements steps (c)..(m)
+    ///      of the Behavior Specification verbatim: fee accounting, balance-diff measurement,
+    ///      positive-slippage cap, output-denominated partner fee, slippage floor, payout, event.
+    function _executeSwap(SwapParams calldata params, uint256 pulled) internal returns (uint256 amountOut) {
+        uint256 protocolFee = (pulled * params.protocolFeeBps) / 10_000;
+        uint256 inputPartnerFee = params.partnerFeeOnOutput ? 0 : (pulled * params.partnerFeeBps) / 10_000;
+        if (inputPartnerFee > 0) {
+            _transferOut(params.inputToken, params.partnerRecipient, inputPartnerFee);
+        }
+
+        uint256 outputBefore = _balanceOf(params.outputToken);
+        _forwardToExecutor(
+            params.inputToken, pulled - protocolFee - inputPartnerFee, params.weirollCommands, params.weirollState
+        );
+        amountOut = _balanceOf(params.outputToken) - outputBefore;
+
+        uint256 positiveSlippage;
+        if (!params.passPositiveSlippageToUser && amountOut > params.outputQuote) {
+            positiveSlippage = amountOut - params.outputQuote;
+            amountOut = params.outputQuote;
+        }
+
+        uint256 outputPartnerFee;
+        if (params.partnerFeeOnOutput && params.partnerFeeBps > 0) {
+            outputPartnerFee = (amountOut * params.partnerFeeBps) / 10_000;
+            amountOut -= outputPartnerFee;
+            _transferOut(params.outputToken, params.partnerRecipient, outputPartnerFee);
+        }
+
+        if (amountOut < params.outputMin) {
+            revert SlippageExceeded(params.outputToken, amountOut, params.outputMin);
+        }
+
+        _transferOut(params.outputToken, params.recipient, amountOut);
+
+        _emitSwap(
+            params, amountOut, outputPartnerFee, protocolFee, inputPartnerFee + outputPartnerFee, positiveSlippage
+        );
+    }
+
+    /// @dev Extracted to keep `_executeSwap`'s stack under the EVM's 16-slot limit. The event's
+    ///      `amountOut` field is the raw executor-produced amount, reconstructed here as
+    ///      `amountToUser + outputPartnerFee + positiveSlippage` so off-chain consumers can
+    ///      tie fee attribution back to the pulled input (invariant used by INF-0012).
+    function _emitSwap(
+        SwapParams calldata params,
+        uint256 amountToUser,
+        uint256 outputPartnerFee,
+        uint256 protocolFee,
+        uint256 partnerFee,
+        uint256 positiveSlippage
+    ) internal {
+        emit Swap(
+            msg.sender,
+            params.inputToken,
+            params.inputAmount,
+            params.outputToken,
+            amountToUser + outputPartnerFee + positiveSlippage,
+            amountToUser,
+            protocolFee,
+            partnerFee,
+            positiveSlippage,
+            params.partnerRecipient
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Swap entry points
+    // -------------------------------------------------------------------------
+
+    /// @notice Single-input, single-output swap. Pulls input from `msg.sender` (or accepts it as
+    ///         native ETH via `msg.value`), deducts protocol and optional partner fees, forwards
+    ///         the remainder to the executor, measures output via balance-diff, optionally caps
+    ///         positive slippage, applies output-denominated partner fee, and pays the user.
+    function swap(SwapParams calldata params) external payable nonReentrant whenNotPaused returns (uint256 amountOut) {
+        _validateSwap(params);
+        uint256 pulled = _pullInput(params.inputToken, params.inputAmount);
+        amountOut = _executeSwap(params, pulled);
     }
 
     /// @notice Multi-input, multi-output swap. Body lands in INF-0006.
@@ -313,18 +461,17 @@ contract Router is Ownable2Step, Pausable, ReentrancyGuard {
     }
 
     /**
-     * @notice Sweep accrued balances by routing them through a user-supplied Weiroll path
-     *         rather than transferring them directly. Real implementation lands with INF-0005
-     *         once `swap` has a body to reuse.
+     * @notice Sweep accrued balances by routing them through a Weiroll path rather than paying
+     *         them out directly. Runs the same fee/slippage pipeline as `swap` but starts from
+     *         Router-held funds: no `transferFrom`, no `msg.value`. Used to convert accumulated
+     *         fee dust into a canonical token. Owner- or liquidator-gated.
      */
-    function swapRouterFunds(
-        SwapParams calldata /* params */
-    )
-        external
-        onlyOwnerOrLiquidator
-        returns (uint256)
-    {
-        revert NotImplemented();
+    function swapRouterFunds(SwapParams calldata params) external onlyOwnerOrLiquidator returns (uint256 amountOut) {
+        _validateSwapCommon(params);
+        if (params.recipient == address(0)) revert ZeroAddress();
+        uint256 pulled = params.inputAmount;
+        require(_balanceOf(params.inputToken) >= pulled, "Router: insufficient balance");
+        amountOut = _executeSwap(params, pulled);
     }
 
     // -------------------------------------------------------------------------
