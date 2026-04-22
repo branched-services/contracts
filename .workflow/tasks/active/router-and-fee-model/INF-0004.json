@@ -28,8 +28,8 @@
     "[manual] transferRouterFunds correctly handles both ERC20 (SafeERC20.safeTransfer) and NATIVE_ETH_SENTINEL (low-level call with ETHTransferFailed revert on false).",
     "[manual] Swap event declared with exactly the 10 FR-17 fields in order: sender (indexed), inputToken, inputAmount, outputToken, amountOut, amountToUser, protocolFee, partnerFee, positiveSlippageCaptured, partnerRecipient."
   ],
-  "passing": false,
-  "implementation_notes": "",
+  "passing": true,
+  "implementation_notes": "Added src/Router.sol freezing the full audit-facing ABI: Ownable2Step + Pausable + ReentrancyGuard base, SwapParams/MultiSwapParams structs, all 19 spec errors (Paused lives in a same-file RouterErrors library to avoid colliding with OZ's inherited `Paused(address)` event; the override of `_requireNotPaused` reverts `RouterErrors.Paused()` so the spec-named selector is what users see), the 10-field FR-17 Swap event plus admin events, executor two-step registry, owner/liquidator sweep via transferRouterFunds, and swap/swapMulti/swapRouterFunds signatures that revert NotImplemented() for INF-0005/INF-0006. forge build, forge test, and forge fmt --check all clean; inspect abi contains every required entry. Commit: 23ac5f8.",
   "github_item_id": null,
   "prerequisites": ["INF-0001"],
   "parallel_group": null,
