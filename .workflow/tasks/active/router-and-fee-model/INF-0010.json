@@ -21,8 +21,8 @@
     "[auto] All tests pass; zero skipped; `forge test --match-path test/Router.Access.t.sol -v`.",
     "[manual] Liquidator negative-path tests prove the role is strictly narrower than owner (no governance capabilities)."
   ],
-  "passing": false,
-  "implementation_notes": "",
+  "passing": true,
+  "implementation_notes": "Added test/Router.Access.t.sol with 22 passing tests covering FR-13/14: Ownable2Step (initial owner, two-step transfer end-to-end, non-owner reverts on setPendingExecutor/setLiquidator/pause), liquidator role (initial value, owner-only update, cannot self-update, cannot call any config surface), Pausable (blocks swap + swapMulti, does not block sweep, unpause restores, non-owner cannot pause), transferRouterFunds (owner + liquidator happy paths with ERC20+native mixed array, stranger Unauthorized, ArrayLengthMismatch, ZeroAddress, empty-arrays no-op), and swapRouterFunds (owner sweeps router-held dust into another token via executor; stranger reverts Unauthorized). setUp seeds 10e18 tokenA dust by running one 1%-protocol-fee swap. Commit 1c89682.",
   "github_item_id": null,
   "prerequisites": ["INF-0005"],
   "parallel_group": "router-tests-L1",
