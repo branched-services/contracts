@@ -2,19 +2,19 @@
 
 ## Summary
 
-Introduce a dedicated `Router` contract that holds user ERC20 approvals and delegates execution to a separately-deployed, owner-upgradeable executor (a refactored `ExecutionProxy`). The Router owns the entire fee model: a caller-supplied **protocol fee** on inputs (capped on-chain), an optional **partner fee** on either input or output token (also capped), and **positive slippage** capture via balance-diff accounting between `outputQuote` and executed output. Closely mirrors Odos Router V3 for pull+delegate + balance-diff accounting; follows 0x for per-call fee bps in calldata with an immutable on-chain cap.
+Introduce a dedicated `Router` contract that holds user ERC20 approvals and delegates execution to a separately-deployed, owner-upgradeable executor (a refactored `ExecutionProxy`). The Router owns the entire fee model: a caller-supplied **protocol fee** on inputs (capped on-chain), an optional **partner fee** on either input or output token (also capped), and **positive slippage** capture via balance-diff accounting between `outputQuote` and executed output. Pull+delegate with balance-diff accounting; per-call fee bps in calldata gated by an immutable on-chain cap.
 
 ## Background
 
 Current state: `ExecutionProxy` is a monolithic contract that (a) holds user approvals, (b) executes Weiroll programs, (c) verifies slippage via `OutputSpec.minAmount`, and (d) charges a fee on the output token with an EIP-712 signed fee voucher for per-call overrides. This pre-MVP contract has no mainnet deployment, so there is no live user migration.
 
-The refactor adopts the Router/executor split that both 0x and Odos use in production:
+The refactor adopts a Router/executor split:
 
 - Users approve the Router once. Upgrading the executor does not force re-approval.
 - Fee logic is centralized at the boundary where the user's funds enter and exit the system, making it the single place to audit for economic correctness.
-- Positive-slippage capture becomes a native revenue stream (Odos confirmed this is meaningful).
+- Positive-slippage capture becomes a native revenue stream.
 
-The input decisions from the originating ticket fixed the top-level strategy (flat admin-configurable protocol fee on inputs, partner fee with on-chain cap, Odos-style positive-slippage capture with per-swap pass-through flag). This spec resolves the ~20 sub-decisions those leave open.
+The input decisions from the originating ticket fixed the top-level strategy (flat admin-configurable protocol fee on inputs, partner fee with on-chain cap, positive-slippage capture with per-swap pass-through flag). This spec resolves the ~20 sub-decisions those leave open.
 
 ## Scope
 
@@ -37,15 +37,15 @@ The input decisions from the originating ticket fixed the top-level strategy (fl
 ### Out of Scope
 
 - **Permit2 integration**: deferred; ship ERC20-approve-to-Router path only at launch.
-- **Post-swap hooks** (Odos `swapWithHook`): deferred.
-- **Compact calldata** (Odos `swapCompact` with Yul decoder + address list): deferred.
+- **Post-swap hooks** (`swapWithHook`-style): deferred.
+- **Compact calldata** (Yul decoder + address list): deferred.
 - **EIP-712 signed fee vouchers** (currently in ExecutionProxy): retired entirely.
 - **Off-chain user-plan registry**: plan-based fee discrimination lives in the quoting backend (bps is baked into calldata). No on-chain plan allowlist.
 - **Partner registry / allowlist**: partners are identified only by the recipient address the caller supplies. No on-chain partner whitelist.
 - **Partner share of positive slippage**: 100% of captured slippage goes to Infrared.
 - **Timelock on owner actions**: deferred; can be added post-audit if desired.
-- **Signed outputQuote voucher** to prevent positive-slippage bypass: accepted leak, matching Odos/0x practice.
-- **ERC721 executor registry** (0x-style per-feature deployer): overkill for a single executor.
+- **Signed outputQuote voucher** to prevent positive-slippage bypass: accepted leak.
+- **Per-feature executor registry** (ERC721-gated deployer): overkill for a single executor.
 - **User migration from existing ExecutionProxy**: none — pre-MVP, nothing deployed.
 
 ## Requirements
@@ -79,7 +79,7 @@ The input decisions from the originating ticket fixed the top-level strategy (fl
 9. **FR-9 (Quote Validity)**: Router reverts when `outputMin > outputQuote` or `outputMin == 0` or `outputQuote == 0` or `inputAmount == 0`.
    - Acceptance: Each invariant triggers a named revert.
 
-10. **FR-10 (Executor Resolution)**: Router reads `executor` from its own storage (single address, owner-set via two-step pattern) and calls `IExecutor.executePath(commands, state)`. Router passes the remaining input tokens to the executor address before the call (Odos pattern).
+10. **FR-10 (Executor Resolution)**: Router reads `executor` from its own storage (single address, owner-set via two-step pattern) and calls `IExecutor.executePath(commands, state)`. Router passes the remaining input tokens to the executor address before the call.
     - Acceptance: Owner calls `setPendingExecutor(newAddr)` then `acceptExecutor()`; swaps issued after the accept use the new executor; swaps issued in-between are not affected.
 
 11. **FR-11 (Executor Is Pure VM)**: `ExecutionProxy.sol` is refactored to contain only: inherit Weiroll `VM`, expose `executePath(bytes32[] commands, bytes[] state)`, and `receive()`/`fallback()` for ETH. No `Ownable`, no fee state, no slippage check, no EIP-712, no `ReentrancyGuard` (guard is at Router).
@@ -204,44 +204,42 @@ Same as step 3 except: balance snapshots use `address(this).balance`; final tran
 - `test/mocks/`: adversarial tokens (fee-on-transfer, rebasing, callback, false-returning), MockDEX, reentrancy attacker. Reusable directly.
 - `test/WeirollTestHelper.t.sol` + `test/helpers/WeirollTestHelper.sol`: existing encoding/state-array helpers. Reusable.
 - `test/ExecutionProxy.t.sol`: existing test suite — tests around fee logic will be moved to `test/Router.t.sol`; tests around Weiroll execution stay with the executor.
-- `docs/internal/odos-architecture.md`, `docs/internal/odos-fees.md`: authoritative references for the adopted patterns.
-- `docs/internal/0x-settler-architecture.md`, `docs/internal/0x-fee-model.md`: reference for the per-call fee bps model and cap-as-only-guarantee design.
 
 ## Decisions Log
 
 | Decision                                         | Choice                                                                 | Rationale                                                                                                                 |
 | ------------------------------------------------ | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| Router architecture                              | Odos-style pull + delegate with balance-diff accounting                | Strongest user guarantee (slippage enforced after all execution); executor-agnostic; well-documented precedent.           |
-| Router-to-executor relationship                  | Owner-set `executor` address, two-step pattern                         | Simplest registry; governance-tx upgrade path; matches 0x simplicity without ERC721 overhead.                             |
+| Router architecture                              | Pull + delegate with balance-diff accounting                           | Strongest user guarantee (slippage enforced after all execution); executor-agnostic.                                      |
+| Router-to-executor relationship                  | Owner-set `executor` address, two-step pattern                         | Simplest registry; governance-tx upgrade path; minimal overhead.                                                          |
 | Permit2 at launch                                | No — ERC20 approve path only                                           | Smaller audit scope; faster delivery; Permit2 is additive and can ship later without user migration.                      |
 | Launch feature set                                | `swap()` + `swapMulti()`                                               | Covers 90%+ of volume; hooks/compact-calldata defer.                                                                     |
 | EIP-712 signed fee voucher                       | Retired entirely                                                       | Router becomes the single fee authority; per-call bps in calldata + on-chain cap is the new guarantee.                    |
 | Protocol fee mechanism                           | Skim from input in Router before forwarding to executor                | Matches user's "charged on INPUTS" mandate literally; deterministic; single transfer path.                                |
-| Protocol fee authority model                     | Caller-supplied `protocolFeeBps` in calldata, capped on-chain          | Matches 0x's approach; backend decides bps based on user's plan; cap is the on-chain guarantee against malicious calldata.|
-| Protocol fee cap                                 | `MAX_PROTOCOL_FEE_BPS = 200` (2.0%), immutable                         | Headroom above Odos's 25 bps protected-swap rate without exposing users to extreme worst case. 10% cap rejected as too loose given bps is caller-controlled. |
-| Fee custody                                      | Accumulate in Router; sweep via owner/liquidator                       | Matches Odos; cheaper per-swap gas; liquidator separation lets a hot wallet handle routine sweeps.                         |
+| Protocol fee authority model                     | Caller-supplied `protocolFeeBps` in calldata, capped on-chain          | Backend decides bps based on user's plan; cap is the on-chain guarantee against malicious calldata.                       |
+| Protocol fee cap                                 | `MAX_PROTOCOL_FEE_BPS = 200` (2.0%), immutable                         | Headroom for typical protected-swap rates without exposing users to extreme worst case. 10% cap rejected as too loose given bps is caller-controlled. |
+| Fee custody                                      | Accumulate in Router; sweep via owner/liquidator                       | Cheaper per-swap gas; liquidator separation lets a hot wallet handle routine sweeps.                                       |
 | Partner fee split                                | 100% to partner; Infrared takes no cut                                 | Go-to-market lever; easier integrator recruitment; Infrared revenue comes from protocol fee + positive slippage.          |
-| Partner fee token                                | Caller chooses per-call (INPUT or OUTPUT)                              | Matches 0x's `swapFeeToken` flexibility; two code paths acceptable; supports both fee-on-sell and fee-on-buy integrators. |
-| Partner fee cap                                  | `MAX_PARTNER_FEE_BPS = 200` (2.0%), immutable                          | Industry-standard 2% cap (Odos's hard cap).                                                                               |
+| Partner fee token                                | Caller chooses per-call (INPUT or OUTPUT)                              | Two code paths acceptable; supports both fee-on-sell and fee-on-buy integrators.                                          |
+| Partner fee cap                                  | `MAX_PARTNER_FEE_BPS = 200` (2.0%), immutable                          | Industry-standard 2% cap.                                                                                                 |
 | Partner auth                                     | Any address the caller supplies in calldata                            | No on-chain registry; caller trust is the caller's problem; cap protects the user.                                        |
-| Positive slippage capture mechanism              | Balance-diff with cap at `outputQuote`                                 | Matches Odos exactly; no trust in executor; cheap.                                                                        |
+| Positive slippage capture mechanism              | Balance-diff with cap at `outputQuote`                                 | No trust in executor; cheap.                                                                                              |
 | Positive-slippage pass-through flag              | Dedicated `bool passPositiveSlippageToUser` on swap struct             | Self-documenting; calldata cost negligible at launch (compact calldata deferred).                                         |
-| Defense against positive-slippage revenue bypass | Accept the leak — rely on API-control of calldata                      | Both Odos and 0x explicitly accept this; adding on-chain defenses (per-caller allowlist, signed quote voucher) duplicates infrastructure and doesn't close the underlying `outputQuote`-inflation attack. |
+| Defense against positive-slippage revenue bypass | Accept the leak — rely on API-control of calldata                      | Adding on-chain defenses (per-caller allowlist, signed quote voucher) duplicates infrastructure and doesn't close the underlying `outputQuote`-inflation attack. |
 | Partner share of positive slippage               | None — 100% to Infrared when captured                                  | Simplifies model; partners earn via partner fee only.                                                                     |
-| `outputQuote` / `outputMin` model                | Both explicit in calldata; `outputMin <= outputQuote` enforced         | Matches Odos; backend responsible for honest quoting.                                                                     |
+| `outputQuote` / `outputMin` model                | Both explicit in calldata; `outputMin <= outputQuote` enforced         | Backend responsible for honest quoting.                                                                                   |
 | Fee stacking on INPUT token                      | Protocol fee + partner fee both deducted from input; caps independent  | Simpler math and audit; worst-case 4% combined input fee is documented and intentional.                                   |
-| Same-token swap check                            | Revert on `inputToken == outputToken`; multi-swap extended check       | Prevents self-arbitrage exploit of positive-slippage cap; matches Odos.                                                   |
+| Same-token swap check                            | Revert on `inputToken == outputToken`; multi-swap extended check       | Prevents self-arbitrage exploit of positive-slippage cap.                                                                 |
 | ExecutionProxy new role                          | Pure Weiroll VM wrapper; no fees, no slippage, no EIP-712, no owner    | Smallest possible audit surface for the arbitrary-execution piece; Router owns all economic logic.                         |
 | Governance                                       | `Ownable2Step` multisig owner + separate Liquidator + emergency pause  | Owner multisig for config/governance; liquidator hot-wallet for routine sweeps; pause for incident response. No timelock at launch (can add post-audit). |
-| Multi-chain deploy                               | CREATE3 same address on all supported chains                           | Reuses existing factory; partners can hardcode; matches Odos/0x deterministic-address pattern.                             |
-| Native ETH sentinel                              | `0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE` (reuse existing)          | Consistent with existing ExecutionProxy + 1inch/Aave convention. Chain-agnostic (relies only on core EVM opcodes).        |
+| Multi-chain deploy                               | CREATE3 same address on all supported chains                           | Reuses existing factory; partners can hardcode a single address.                                                          |
+| Native ETH sentinel                              | `0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE` (reuse existing)          | Consistent with existing ExecutionProxy and a widely-adopted EVM convention. Chain-agnostic (relies only on core EVM opcodes). |
 | Fee-on-transfer / rebasing tokens                | Balance-diff accounting natively handles them; no denylist              | Router measures actual pulled/produced amounts; adversarial-token mocks in `test/mocks/` cover the behavior.              |
 | User migration                                   | None — pre-MVP, no prior deployment                                    | Fresh deploy; no legacy approvals to preserve.                                                                            |
 | Testing scope                                    | Unit + fuzz + invariant + single external audit                        | Appropriate for pre-MVP risk level; can add fork tests, formal verification, or second audit as TVL grows.               |
 
 ## Lineage
 
-- **Research**: None — defined from scratch, driven by `docs/internal/odos-architecture.md`, `docs/internal/odos-fees.md`, `docs/internal/0x-settler-architecture.md`, and `docs/internal/0x-fee-model.md`.
+- **Research**: None — defined from scratch.
 - **Originating decision ticket**: informal design brief in the `/define` invocation (Router+core split, protocol fee on inputs, partner fee at launch, positive slippage kept by default with pass-through flag).
 
 ## Open Questions

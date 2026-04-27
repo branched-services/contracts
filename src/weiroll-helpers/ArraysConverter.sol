@@ -35,7 +35,8 @@ contract ArraysConverter {
 
     /**
      * @notice Extracts the last element from a uint256 array
-     * @dev Useful for extracting output amount from Uniswap V2 swapExactTokensForTokens
+     * @dev Useful for extracting the final output amount from a router that returns the full
+     *      input/output amounts array (e.g. swapExactTokensForTokens-style functions)
      * @param amounts The input array
      * @return The last element of the array
      */
