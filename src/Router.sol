@@ -8,6 +8,8 @@ import { Ownable2Step } from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import { Pausable } from "@openzeppelin/contracts/utils/Pausable.sol";
 import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
+import { ISignatureTransfer } from "permit2/interfaces/ISignatureTransfer.sol";
+
 import { IExecutor } from "src/interfaces/IExecutor.sol";
 
 /// @notice Library carrying errors that would collide with identifiers inherited by Router.
@@ -61,6 +63,7 @@ contract Router is Ownable2Step, Pausable, ReentrancyGuard {
     error ExecutorNotSet();
     error ZeroAddress();
     error ArrayLengthMismatch();
+    error NativeInputNotPermit2Compatible();
 
     // -------------------------------------------------------------------------
     // Constants
@@ -78,6 +81,12 @@ contract Router is Ownable2Step, Pausable, ReentrancyGuard {
     ///         the partner fee never exceeds 2.00%. Caps are applied independently of the
     ///         protocol fee; the theoretical combined worst case on input is 4.00%.
     uint256 public constant MAX_PARTNER_FEE_BPS = 200;
+
+    /// @notice Canonical Permit2 deployment. Same address on every chain Permit2 is deployed
+    ///         to (Ethereum, Base, Sepolia, Base Sepolia, and beyond). Hardcoded rather than
+    ///         caller-supplied so calldata cannot point at a contract that returns success
+    ///         without transferring tokens.
+    ISignatureTransfer public constant PERMIT2 = ISignatureTransfer(0x000000000022D473030F116dDEE9F6B43aC78BA3);
 
     // -------------------------------------------------------------------------
     // Structs
@@ -99,6 +108,18 @@ contract Router is Ownable2Step, Pausable, ReentrancyGuard {
         bool passPositiveSlippageToUser;
         bytes32[] weirollCommands;
         bytes[] weirollState;
+    }
+
+    /// @notice Caller-supplied Permit2 authorization for `swapPermit2` / `swapMultiPermit2`.
+    /// @dev Router builds the `TokenPermissions` (single) or `TokenPermissions[]` (batch) from
+    ///      the swap params at the call site, so the user's signature commits to the exact
+    ///      `inputAmount` (or `inputAmounts[i]`) being requested. Replay protection (nonce
+    ///      uniqueness, deadline expiry) is enforced by Permit2 itself; Router does no nonce
+    ///      bookkeeping of its own.
+    struct Permit2Data {
+        uint256 nonce;
+        uint256 deadline;
+        bytes signature;
     }
 
     /// @notice Parameters for an atomic multi-input, multi-output swap.
@@ -479,12 +500,14 @@ contract Router is Ownable2Step, Pausable, ReentrancyGuard {
         }
     }
 
-    /// @dev Pulls all inputs via balance-diff, skims protocol + input-side partner fees, and
-    ///      stages the remainder for the executor. Native-ETH inputs are held on the Router
-    ///      (already received via `msg.value`) and their forwarded amount is accumulated in
-    ///      `nativeForwardAmount` to pass as `msg.value` on the single executor call. ERC20
-    ///      inputs are `safeTransfer`red to the executor directly.
-    function _pullInputs(MultiSwapParams calldata params)
+    /// @dev Post-pull logic shared by both the approve path (`swapMulti`) and the Permit2
+    ///      path (`swapMultiPermit2`). Given the per-token amount actually received by the
+    ///      Router, computes protocol + input-side partner fees, transfers any partner fee
+    ///      to the partner recipient, and stages the remainder: ERC20 inputs are
+    ///      `safeTransfer`red to the executor; native ETH stays on the Router and its
+    ///      forwarded amount is accumulated in `nativeForwardAmount` for a single
+    ///      `.call{value: ...}` to the executor by the caller.
+    function _processPulledInputs(MultiSwapParams calldata params, uint256[] memory pulledArr)
         internal
         returns (
             uint256 nativeForwardAmount,
@@ -499,10 +522,9 @@ contract Router is Ownable2Step, Pausable, ReentrancyGuard {
         address exec = executor;
         for (uint256 i = 0; i < n; ++i) {
             address token = params.inputTokens[i];
-            uint256 amount = params.inputAmounts[i];
-            inputAmountSum += amount;
+            inputAmountSum += params.inputAmounts[i];
 
-            uint256 pulled = _pullInput(token, amount);
+            uint256 pulled = pulledArr[i];
             uint256 protocolFee = (pulled * params.protocolFeeBps) / 10_000;
             uint256 inputPartnerFee = params.partnerFeeOnOutput ? 0 : (pulled * params.partnerFeeBps) / 10_000;
             if (inputPartnerFee > 0) {
@@ -519,6 +541,70 @@ contract Router is Ownable2Step, Pausable, ReentrancyGuard {
             } else {
                 IERC20(token).safeTransfer(exec, forward);
             }
+        }
+    }
+
+    /// @dev Pull `amount` of `token` from `msg.sender` into the Router via Permit2 and return
+    ///      the balance delta actually received. Mirrors `_pullInput` semantics for fee-on-
+    ///      transfer tokens (FR-15). Reverts `NativeInputNotPermit2Compatible` if `token` is
+    ///      the native ETH sentinel. The user's signature must commit to `(token, amount,
+    ///      permit.nonce, permit.deadline)`; a tampered amount triggers `InvalidSigner` from
+    ///      Permit2.
+    function _pullInputViaPermit2(address token, uint256 amount, Permit2Data calldata permit)
+        internal
+        returns (uint256 pulled)
+    {
+        if (token == NATIVE_ETH_SENTINEL) revert NativeInputNotPermit2Compatible();
+        uint256 balanceBefore = IERC20(token).balanceOf(address(this));
+        PERMIT2.permitTransferFrom(
+            ISignatureTransfer.PermitTransferFrom({
+                permitted: ISignatureTransfer.TokenPermissions({ token: token, amount: amount }),
+                nonce: permit.nonce,
+                deadline: permit.deadline
+            }),
+            ISignatureTransfer.SignatureTransferDetails({ to: address(this), requestedAmount: amount }),
+            msg.sender,
+            permit.signature
+        );
+        return IERC20(token).balanceOf(address(this)) - balanceBefore;
+    }
+
+    /// @dev Batch variant: pulls every `(inputTokens[i], inputAmounts[i])` into the Router via
+    ///      a single `permitTransferFrom` call. Returns the per-index balance deltas. Reverts
+    ///      `NativeInputNotPermit2Compatible` on any native-ETH input slot. The signed batch
+    ///      `TokenPermissions[]` is constructed at the call site, so the user's single
+    ///      signature commits to the full multi-token authorization.
+    function _pullInputsViaPermit2(MultiSwapParams calldata params, Permit2Data calldata permit)
+        internal
+        returns (uint256[] memory pulledArr)
+    {
+        uint256 n = params.inputTokens.length;
+        ISignatureTransfer.TokenPermissions[] memory permitted = new ISignatureTransfer.TokenPermissions[](n);
+        ISignatureTransfer.SignatureTransferDetails[] memory details =
+            new ISignatureTransfer.SignatureTransferDetails[](n);
+        uint256[] memory balancesBefore = new uint256[](n);
+
+        for (uint256 i = 0; i < n; ++i) {
+            address token = params.inputTokens[i];
+            if (token == NATIVE_ETH_SENTINEL) revert NativeInputNotPermit2Compatible();
+            uint256 amount = params.inputAmounts[i];
+            permitted[i] = ISignatureTransfer.TokenPermissions({ token: token, amount: amount });
+            details[i] = ISignatureTransfer.SignatureTransferDetails({ to: address(this), requestedAmount: amount });
+            balancesBefore[i] = IERC20(token).balanceOf(address(this));
+        }
+
+        PERMIT2.permitTransferFrom(
+            ISignatureTransfer.PermitBatchTransferFrom({
+                permitted: permitted, nonce: permit.nonce, deadline: permit.deadline
+            }),
+            details,
+            msg.sender,
+            permit.signature
+        );
+
+        pulledArr = new uint256[](n);
+        for (uint256 i = 0; i < n; ++i) {
+            pulledArr[i] = IERC20(params.inputTokens[i]).balanceOf(address(this)) - balancesBefore[i];
         }
     }
 
@@ -668,14 +754,63 @@ contract Router is Ownable2Step, Pausable, ReentrancyGuard {
     // forgefmt: disable-next-item
     function swapMulti(MultiSwapParams calldata params) external payable nonReentrant whenNotPaused returns (uint256[] memory amountsOut) {
         _validateMultiSwap(params);
+        uint256 n = params.inputTokens.length;
+        uint256[] memory pulledArr = new uint256[](n);
+        for (uint256 i = 0; i < n; ++i) {
+            pulledArr[i] = _pullInput(params.inputTokens[i], params.inputAmounts[i]);
+        }
+        amountsOut = _executeMultiSwap(params, pulledArr);
+    }
 
+    /// @notice Permit2 variant of `swap`. Pulls a single ERC20 input via
+    ///         `ISignatureTransfer.permitTransferFrom` instead of relying on a prior
+    ///         `approve`. The user's off-chain EIP-712 signature commits to `(inputToken,
+    ///         inputAmount, permit.nonce, permit.deadline)`; replay protection is enforced
+    ///         by Permit2. Native ETH inputs are rejected — use `swap` for ETH.
+    function swapPermit2(SwapParams calldata params, Permit2Data calldata permit)
+        external
+        nonReentrant
+        whenNotPaused
+        returns (uint256 amountOut)
+    {
+        if (params.inputToken == NATIVE_ETH_SENTINEL) revert NativeInputNotPermit2Compatible();
+        _validateSwapCommon(params);
+        uint256 pulled = _pullInputViaPermit2(params.inputToken, params.inputAmount, permit);
+        amountOut = _executeSwap(params, pulled);
+    }
+
+    /// @notice Permit2 variant of `swapMulti`. Pulls every ERC20 input via a single batched
+    ///         `ISignatureTransfer.permitTransferFrom` call instead of per-token `approve`s.
+    ///         The user's single signature commits to the full `(inputTokens[], inputAmounts[],
+    ///         permit.nonce, permit.deadline)` set. Native ETH inputs are rejected on any
+    ///         slot — use `swapMulti` for ETH.
+    // forgefmt: disable-next-item
+    function swapMultiPermit2(MultiSwapParams calldata params, Permit2Data calldata permit) external nonReentrant whenNotPaused returns (uint256[] memory amountsOut) {
+        uint256 nIn = params.inputTokens.length;
+        for (uint256 i = 0; i < nIn; ++i) {
+            if (params.inputTokens[i] == NATIVE_ETH_SENTINEL) revert NativeInputNotPermit2Compatible();
+        }
+        _validateMultiSwap(params);
+        uint256[] memory pulledArr = _pullInputsViaPermit2(params, permit);
+        amountsOut = _executeMultiSwap(params, pulledArr);
+    }
+
+    /// @dev Shared post-pull body for `swapMulti` and `swapMultiPermit2`. Takes the per-token
+    ///      amounts already received by the Router, processes input-side fees, forwards the
+    ///      remainder to the executor, snapshots and settles outputs, and emits one `Swap`
+    ///      event per output. Behavior is identical regardless of which pull mechanism
+    ///      populated `pulledArr`.
+    function _executeMultiSwap(MultiSwapParams calldata params, uint256[] memory pulledArr)
+        internal
+        returns (uint256[] memory amountsOut)
+    {
         (
             uint256 nativeForwardAmount,
             uint256 totalProtocolFees,
             uint256 totalInputPartnerFees,
             uint256 inputAmountSum,
             address effectiveInputToken
-        ) = _pullInputs(params);
+        ) = _processPulledInputs(params, pulledArr);
 
         uint256 nOut = params.outputTokens.length;
         uint256[] memory outputBefore = new uint256[](nOut);
