@@ -2,18 +2,16 @@
 pragma solidity ^0.8.24;
 
 import { Script, console2 } from "forge-std/Script.sol";
-import { ExecutionProxy } from "../src/ExecutionProxy.sol";
+import { Router } from "../src/Router.sol";
 import { BlockchainInfo } from "../src/weiroll-helpers/BlockchainInfo.sol";
 
 /// @title VerifyDeployment
-/// @notice Post-deployment verification script
-/// @dev Verifies contracts are deployed and configured correctly
+/// @notice Post-deployment verification script. Asserts that Router is wired correctly
+///         (owner, executor, liquidator, not paused, no pending executor) and that all
+///         helper contracts have code at their expected addresses.
 contract VerifyDeployment is Script {
-    // Expected owner addresses per chain (update after deployment)
-    mapping(uint256 => address) public expectedOwners;
-
-    // Contract addresses per chain (populated from deployment registry)
     struct Addresses {
+        address router;
         address executionProxy;
         address tupler;
         address integer;
@@ -25,16 +23,6 @@ contract VerifyDeployment is Script {
     uint256 public passCount;
     uint256 public failCount;
 
-    function setUp() public {
-        // Set expected owners per chain
-        // Testnets: deployer EOA
-        // Mainnets: Safe multi-sig (update these after Safe creation)
-        expectedOwners[11155111] = address(0); // Sepolia - set to deployer
-        expectedOwners[84532] = address(0); // Base Sepolia - set to deployer
-        expectedOwners[1] = address(0); // Ethereum - set to Safe
-        expectedOwners[8453] = address(0); // Base - set to Safe
-    }
-
     /// @notice Check if address has code deployed
     function hasCode(address addr) public view returns (bool) {
         uint256 size;
@@ -44,20 +32,17 @@ contract VerifyDeployment is Script {
         return size > 0;
     }
 
-    /// @notice Log pass result
     function pass(string memory check) internal {
-        console2.log(unicode"✓", check);
+        console2.log(unicode"  [PASS]", check);
         passCount++;
     }
 
-    /// @notice Log fail result
     function fail(string memory check, string memory reason) internal {
-        console2.log(unicode"✗", check);
-        console2.log("  Reason:", reason);
+        console2.log(unicode"  [FAIL]", check);
+        console2.log("    Reason:", reason);
         failCount++;
     }
 
-    /// @notice Verify a contract is deployed at address
     function verifyDeployed(address addr, string memory name) internal {
         if (hasCode(addr)) {
             pass(string.concat(name, " deployed at ", vm.toString(addr)));
@@ -66,16 +51,105 @@ contract VerifyDeployment is Script {
         }
     }
 
-    /// @notice Ownership lives on the Router after the Router/executor refactor.
-    ///         ExecutionProxy itself is stateless (FR-11), so there is nothing to verify
-    ///         on the executor. INF-0013 swaps this in for a Router ownership check.
-    function verifyOwner(address proxyAddr, address) internal {
-        if (!hasCode(proxyAddr)) {
-            fail("Owner check", "ExecutionProxy not deployed");
+    /// @notice Resolve the expected Router owner from env. Required for verification — no fallback.
+    function expectedRouterOwner() internal view returns (address) {
+        try vm.envAddress("ROUTER_OWNER") returns (address a) {
+            return a;
+        } catch {
+            try vm.envAddress("OWNER_ADDRESS") returns (address a) {
+                return a;
+            } catch {
+                return address(0);
+            }
+        }
+    }
+
+    /// @notice Resolve the expected Router liquidator from env. Optional — if unset, only
+    ///         non-zero is asserted.
+    function expectedRouterLiquidator() internal view returns (address) {
+        try vm.envAddress("ROUTER_LIQUIDATOR") returns (address a) {
+            return a;
+        } catch {
+            return address(0);
+        }
+    }
+
+    /// @notice Verify the Router is fully wired and ready to serve swaps.
+    ///         Asserts: code present; owner == expected; executor == executionProxy;
+    ///         liquidator == expected (if env-provided) or non-zero; not paused;
+    ///         pendingExecutor cleared (so `acceptExecutor` was called).
+    function verifyRouter(address routerAddr, address executionProxyAddr) internal {
+        if (!hasCode(routerAddr)) {
+            fail("Router code", "No code at Router address");
             return;
         }
-        console2.log("  ExecutionProxy is stateless; ownership check deferred to Router (INF-0013).");
-        passCount++;
+
+        Router router = Router(payable(routerAddr));
+
+        // Owner check (Ownable2Step)
+        address expectedOwner = expectedRouterOwner();
+        address actualOwner = router.owner();
+        if (expectedOwner == address(0)) {
+            fail("Router owner", "ROUTER_OWNER env not set; cannot verify");
+        } else if (actualOwner == expectedOwner) {
+            pass(string.concat("Router.owner() = ", vm.toString(actualOwner)));
+        } else {
+            fail(
+                "Router owner mismatch",
+                string.concat("expected ", vm.toString(expectedOwner), " got ", vm.toString(actualOwner))
+            );
+        }
+
+        // Executor wiring (the whole point of this script post-deploy)
+        address actualExecutor = router.executor();
+        if (actualExecutor == executionProxyAddr) {
+            pass(string.concat("Router.executor() = ExecutionProxy ", vm.toString(actualExecutor)));
+        } else {
+            fail(
+                "Router executor mismatch",
+                string.concat("expected ", vm.toString(executionProxyAddr), " got ", vm.toString(actualExecutor))
+            );
+        }
+
+        // pendingExecutor must be cleared after acceptExecutor()
+        address actualPending = router.pendingExecutor();
+        if (actualPending == address(0)) {
+            pass("Router.pendingExecutor() cleared (acceptExecutor was called)");
+        } else {
+            fail(
+                "Router pendingExecutor not cleared",
+                string.concat("acceptExecutor() likely not called; pending=", vm.toString(actualPending))
+            );
+        }
+
+        // Liquidator
+        address expectedLiquidator = expectedRouterLiquidator();
+        address actualLiquidator = router.liquidator();
+        if (expectedLiquidator != address(0)) {
+            if (actualLiquidator == expectedLiquidator) {
+                pass(string.concat("Router.liquidator() = ", vm.toString(actualLiquidator)));
+            } else {
+                fail(
+                    "Router liquidator mismatch",
+                    string.concat("expected ", vm.toString(expectedLiquidator), " got ", vm.toString(actualLiquidator))
+                );
+            }
+        } else if (actualLiquidator != address(0)) {
+            pass(
+                string.concat(
+                    "Router.liquidator() = ", vm.toString(actualLiquidator), " (env unset, asserting non-zero)"
+                )
+            );
+        } else {
+            fail("Router liquidator", "Liquidator is zero and ROUTER_LIQUIDATOR env unset");
+        }
+
+        // Not paused on first deploy
+        if (!router.paused()) {
+            pass("Router.paused() == false");
+        } else {
+            fail("Router paused state", "Router is paused on first verification");
+        }
     }
 
     /// @notice Verify BlockchainInfo can read block number
@@ -84,10 +158,7 @@ contract VerifyDeployment is Script {
             fail("BlockchainInfo function call", "Not deployed");
             return;
         }
-
-        BlockchainInfo info = BlockchainInfo(addr);
-        uint256 blockNum = info.getCurrentBlockNumber();
-
+        uint256 blockNum = BlockchainInfo(addr).getCurrentBlockNumber();
         if (blockNum > 0) {
             pass(string.concat("BlockchainInfo.getCurrentBlockNumber() = ", vm.toString(blockNum)));
         } else {
@@ -114,8 +185,8 @@ contract VerifyDeployment is Script {
             return;
         }
 
-        // Parse addresses from registry
         Addresses memory addrs;
+        addrs.router = vm.parseJsonAddress(json, ".contracts.Router.address");
         addrs.executionProxy = vm.parseJsonAddress(json, ".contracts.ExecutionProxy.address");
         addrs.tupler = vm.parseJsonAddress(json, ".contracts.Tupler.address");
         addrs.integer = vm.parseJsonAddress(json, ".contracts.Integer.address");
@@ -123,7 +194,8 @@ contract VerifyDeployment is Script {
         addrs.blockchainInfo = vm.parseJsonAddress(json, ".contracts.BlockchainInfo.address");
         addrs.arraysConverter = vm.parseJsonAddress(json, ".contracts.ArraysConverter.address");
 
-        console2.log("--- Contract Deployment Checks ---");
+        console2.log("--- Code presence checks ---");
+        verifyDeployed(addrs.router, "Router");
         verifyDeployed(addrs.executionProxy, "ExecutionProxy");
         verifyDeployed(addrs.tupler, "Tupler");
         verifyDeployed(addrs.integer, "Integer");
@@ -132,26 +204,25 @@ contract VerifyDeployment is Script {
         verifyDeployed(addrs.arraysConverter, "ArraysConverter");
         console2.log("");
 
-        console2.log("--- Ownership Check ---");
-        verifyOwner(addrs.executionProxy, expectedOwners[chainId]);
+        console2.log("--- Router state checks ---");
+        verifyRouter(addrs.router, addrs.executionProxy);
         console2.log("");
 
-        console2.log("--- Function Call Checks ---");
+        console2.log("--- Helper sanity check ---");
         verifyBlockchainInfo(addrs.blockchainInfo);
         console2.log("");
 
-        // Summary
         console2.log("=== Summary ===");
         console2.log("Passed:", passCount);
         console2.log("Failed:", failCount);
 
         if (failCount > 0) {
             console2.log("");
-            console2.log("VERIFICATION FAILED - Review failures above");
-        } else {
-            console2.log("");
-            console2.log("ALL CHECKS PASSED");
+            console2.log("VERIFICATION FAILED - review failures above before serving traffic.");
+            revert("Verification failed");
         }
+        console2.log("");
+        console2.log("ALL CHECKS PASSED");
     }
 
     /// @notice Quick verification using current chain

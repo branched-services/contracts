@@ -59,11 +59,11 @@ contract Router is Ownable2Step, Pausable, ReentrancyGuard {
     error DuplicateToken(address token);
     error InputOutputIntersection(address token);
     error Unauthorized();
-    error NotImplemented();
     error ExecutorNotSet();
     error ZeroAddress();
     error ArrayLengthMismatch();
     error NativeInputNotPermit2Compatible();
+    error InsufficientRouterBalance();
 
     // -------------------------------------------------------------------------
     // Constants
@@ -858,6 +858,8 @@ contract Router is Ownable2Step, Pausable, ReentrancyGuard {
      * @notice Sweep accrued ERC20 and/or native ETH balances to `dest`. Callable only by
      *         the owner or the liquidator. Zero-length arrays are accepted as a no-op
      *         (still emits `FundsTransferred`).
+     * @dev Intentionally omits `whenNotPaused`: the liquidator must be able to recover
+     *      Router-held funds while the swap surface is paused.
      * @param tokens Token addresses to sweep; use `NATIVE_ETH_SENTINEL` for native ETH.
      * @param amounts Amounts to sweep (parallel to `tokens`).
      * @param dest Recipient of the swept funds.
@@ -889,12 +891,14 @@ contract Router is Ownable2Step, Pausable, ReentrancyGuard {
      *         them out directly. Runs the same fee/slippage pipeline as `swap` but starts from
      *         Router-held funds: no `transferFrom`, no `msg.value`. Used to convert accumulated
      *         fee dust into a canonical token. Owner- or liquidator-gated.
+     * @dev Intentionally omits `whenNotPaused`: paired with `transferRouterFunds` so the
+     *      liquidator can drain or convert Router-held funds while the swap surface is paused.
      */
     function swapRouterFunds(SwapParams calldata params) external onlyOwnerOrLiquidator returns (uint256 amountOut) {
         _validateSwapCommon(params);
         if (params.recipient == address(0)) revert ZeroAddress();
         uint256 pulled = params.inputAmount;
-        require(_balanceOf(params.inputToken) >= pulled, "Router: insufficient balance");
+        if (_balanceOf(params.inputToken) < pulled) revert InsufficientRouterBalance();
         amountOut = _executeSwap(params, pulled);
     }
 

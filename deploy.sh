@@ -85,11 +85,11 @@ set_broadcast_wallet_args() {
     case "$wallet_type" in
         trezor)
             FORGE_WALLET_ARGS+=(--trezor --sender "$deployer")
-            [[ -n "${HD_PATH:-}" ]] && FORGE_WALLET_ARGS+=(--hd-path "$HD_PATH")
+            [[ -n "${HD_PATH:-}" ]] && FORGE_WALLET_ARGS+=(--hd-path "$HD_PATH") || true
             ;;
         ledger)
             FORGE_WALLET_ARGS+=(--ledger --sender "$deployer")
-            [[ -n "${HD_PATH:-}" ]] && FORGE_WALLET_ARGS+=(--hd-path "$HD_PATH")
+            [[ -n "${HD_PATH:-}" ]] && FORGE_WALLET_ARGS+=(--hd-path "$HD_PATH") || true
             ;;
         privatekey)
             FORGE_WALLET_ARGS+=(--private-key "$PRIVATE_KEY")

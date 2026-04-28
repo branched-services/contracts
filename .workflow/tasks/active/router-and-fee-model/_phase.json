@@ -1,8 +1,0 @@
-{
-  "id": "router-and-fee-model",
-  "name": "Router Contract and Fee Model Overhaul",
-  "depends_on_phases": [],
-  "exit_criteria": "Router.sol + pure-VM ExecutionProxy compile, full forge test suite (unit + fuzz + invariant) passes, DeployCreate3 deploys both contracts with Router.executor wired to ExecutionProxy, external audit can be engaged against the frozen interface.",
-  "spec": ".workflow/specs/00001-FEATURE-router-and-fee-model.md",
-  "research": []
-}
