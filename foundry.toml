@@ -18,6 +18,10 @@ via_ir = true
 fuzz = { runs = 256 }
 invariant = { runs = 256, depth = 15 }
 
+# Allow script/Verify.s.sol to read the per-chain deployment registries
+# (`deployments/<chainid>.json`) via `vm.readFile`.
+fs_permissions = [{ access = "read", path = "./deployments" }]
+
 # Formatting
 fmt = { line_length = 120, tab_width = 4, bracket_spacing = true }
 
