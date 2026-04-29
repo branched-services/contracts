@@ -18,9 +18,16 @@ via_ir = true
 fuzz = { runs = 256 }
 invariant = { runs = 256, depth = 15 }
 
-# Allow script/Verify.s.sol to read the per-chain deployment registries
-# (`deployments/<chainid>.json`) via `vm.readFile`.
-fs_permissions = [{ access = "read", path = "./deployments" }]
+# Allow:
+#   - script/Verify.s.sol  -> deployments/<chainid>.json (vm.readFile)
+#   - test/Router.Permit2.t.sol -> out/Permit2.sol/Permit2.json (vm.readFile to
+#     load the canonical Permit2 deployed bytecode for vm.etch)
+# Explicit `./out` is needed because once `fs_permissions` is set, Foundry no
+# longer implicitly grants read access to the build artifact directory.
+fs_permissions = [
+    { access = "read", path = "./deployments" },
+    { access = "read", path = "./out" },
+]
 
 # Formatting
 fmt = { line_length = 120, tab_width = 4, bracket_spacing = true }
