@@ -8,20 +8,28 @@ Deploy Infrared's Solidity contracts with deterministic addresses using CREATE3.
 - [Foundry](https://book.getfoundry.sh/getting-started/installation) (`forge`, `cast`)
 - `jq` for JSON processing
 
-### Environment Variables
+### Wallet Setup
 
-Add the following to `infrared/.env` (auto-loaded by deploy script):
+Deploys sign with a Foundry-encrypted keystore. Generate a fresh hot wallet once:
 
 ```bash
-# Wallet: trezor, ledger, or privatekey (auto-detected from PRIVATE_KEY if not set)
-WALLET_TYPE=trezor
-DEPLOYER_ADDRESS=0x...                                 # Required for trezor/ledger
-# HD_PATH=m/44'/60'/0'/0/0                             # Optional, default derivation path
+./setup-deployer-wallet.sh infrared-deployer
+```
 
-# Or use private key directly (CI, testing)
-# PRIVATE_KEY=0x...
+This creates an encrypted keystore at `~/.foundry/keystores/infrared-deployer` and prints the deployer address. The plaintext key never touches disk; Foundry prompts for the password at broadcast time. Run the script again with a different account name (e.g. `infrared-liquidator`) to create the Router liquidator wallet.
+
+### Environment Variables
+
+Copy `.env.example` to `.env` in the repo root (auto-loaded by the deploy script) and fill in:
+
+```bash
+KEYSTORE_ACCOUNT=infrared-deployer                     # Matches setup-deployer-wallet.sh argument
+DEPLOYER_ADDRESS=0x...                                 # Printed by setup-deployer-wallet.sh
 
 SAFE_ADDRESS=0x...                                     # Safe multi-sig (required for mainnet)
+ROUTER_OWNER=0x...                                     # Router owner; defaults to SAFE_ADDRESS, else DEPLOYER_ADDRESS
+ROUTER_LIQUIDATOR=0x...                                # Liquidator hot wallet (separate keystore)
+
 SEPOLIA_RPC_URL=https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY
 BASE_SEPOLIA_RPC_URL=https://base-sepolia.g.alchemy.com/v2/YOUR_KEY
 ETH_RPC_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY
@@ -30,21 +38,24 @@ ETHERSCAN_API_KEY=YOUR_ETHERSCAN_API_KEY   # V2 key; works across all supported 
 ```
 
 **Notes:**
-- Hardware wallet (`trezor`/`ledger`): requires `DEPLOYER_ADDRESS`. Only the `deploy` command needs the device connected; `preview` and `dry-run` simulate without it.
-- `SAFE_ADDRESS` is required for mainnet. For testnet, it's optional -- the deployer EOA is used as owner if not provided.
+- Only the `deploy` command needs the keystore password; `preview` and `dry-run` simulate using `--sender` only.
+- `SAFE_ADDRESS` is required for mainnet. For testnet it's optional -- the deployer EOA is used as owner if not provided.
 
-See `infrared/.env.example` for the full template.
+See `.env.example` for the full template.
 
 ### Contracts Deployed
 
-| Contract        | Purpose                                      |
-| --------------- | -------------------------------------------- |
-| ExecutionProxy  | Weiroll VM executor with slippage protection |
-| Tupler          | Byte tuple extraction helper                 |
-| Integer         | Comparison utilities                         |
-| Bytes32         | Type conversion helper                       |
-| BlockchainInfo  | Block data reader                            |
-| ArraysConverter | Array manipulation                           |
+Deploys 7 contracts (order in `chains.json` `contracts`):
+
+| Contract        | Purpose                                                                    |
+| --------------- | -------------------------------------------------------------------------- |
+| Router          | User-facing entry point: holds ERC20 approvals, fees, slippage; `Ownable2Step` |
+| ExecutionProxy  | Stateless Weiroll VM executor invoked by the Router (no owner, no storage) |
+| Tupler          | Byte tuple extraction helper                                               |
+| Integer         | Comparison utilities                                                       |
+| Bytes32         | Type conversion helper                                                     |
+| BlockchainInfo  | Block data reader                                                          |
+| ArraysConverter | Array manipulation                                                         |
 
 ## CREATE3 Deterministic Deployment
 
@@ -133,14 +144,16 @@ Repeat for Base Sepolia:
 2. Create new Safe with 2-of-3 threshold
 3. Add 3 signer addresses
 4. Deploy Safe to target chain
-5. Add `SAFE_ADDRESS=0x...` to `infrared/.env`
+5. Add `SAFE_ADDRESS=0x...` to `.env`
 
 ### Step 2: Deploy Contracts
 
 The deploy script automatically:
-- Validates Safe exists on-chain before deploying
-- Deploys ExecutionProxy with Safe as owner (or transfers ownership if already deployed)
-- Records Safe as owner in the deployment registry
+- Validates the Safe exists on-chain before broadcasting
+- Deploys the Router with the Safe as constructor owner (`Ownable2Step`)
+- Deploys the stateless ExecutionProxy (no owner)
+- Records the Safe as `owner` in the deployment registry
+- Skips any contract already deployed at its predicted CREATE3 address (idempotent; ownership of an already-deployed Router is **not** rewritten on re-runs)
 
 ```bash
 # Ethereum Mainnet (requires SAFE_ADDRESS)
@@ -159,10 +172,81 @@ The deploy script automatically:
 
 ### Step 4: Verify Ownership
 
-Confirm ExecutionProxy is owned by the Safe:
+Confirm the Router is owned by the Safe (the ExecutionProxy is stateless and has no `owner()`):
 ```bash
-cast call <EXECUTION_PROXY_ADDRESS> "owner()(address)" --rpc-url $ETH_RPC_URL
+cast call <ROUTER_ADDRESS> "owner()(address)" --rpc-url $ETH_RPC_URL
 # Should return your SAFE_ADDRESS
+```
+
+### Step 5: Wire Router → ExecutionProxy
+
+After deploy, `Router.executor() == address(0)` and every swap entry point reverts. See [Post-Deploy: Wire Router → ExecutionProxy](#post-deploy-wire-router--executionproxy).
+
+## Post-Deploy: Wire Router → ExecutionProxy
+
+The Router enforces a two-step `setPendingExecutor` → `acceptExecutor` transition (Router.sol). Until both run, `Router.executor() == address(0)` and every swap entry point reverts. The flow depends on whether the deployer EOA is also the Router owner.
+
+### Case A: Deployer is the Router owner (testnet without `SAFE_ADDRESS`)
+
+The deploy script broadcasts `setPendingExecutor(executionProxy)` automatically (DeployCreate3.s.sol). Only `acceptExecutor()` is left:
+
+```bash
+cast send <ROUTER_ADDRESS> "acceptExecutor()" \
+  --rpc-url $SEPOLIA_RPC_URL \
+  --account "$KEYSTORE_ACCOUNT" \
+  --from "$DEPLOYER_ADDRESS"
+```
+
+### Case B: Router owner is a Safe multisig (testnet with `SAFE_ADDRESS`, or mainnet)
+
+The deploy script does **not** call `setPendingExecutor` (the broadcasting EOA is not the owner). The Safe must send both txs.
+
+Compute calldata:
+
+```bash
+cast calldata "setPendingExecutor(address)" <EXECUTION_PROXY_ADDRESS>
+# 0x554a3f1b<32-byte padded address>
+
+cast calldata "acceptExecutor()"
+# 0x1f211405
+```
+
+Easiest path: **Safe Transaction Builder** with a JSON batch. Save as `wire-executor-<chain>.json`, then in the Safe app: **Apps → Transaction Builder → Load batch**, drag the file, sign, execute.
+
+```json
+{
+  "version": "1.0",
+  "chainId": "<CHAIN_ID>",
+  "meta": {
+    "name": "Wire Router executor",
+    "createdFromSafeAddress": "<SAFE_ADDRESS>"
+  },
+  "transactions": [
+    {
+      "to": "<ROUTER_ADDRESS>",
+      "value": "0",
+      "data": "<setPendingExecutor calldata>",
+      "contractMethod": null,
+      "contractInputsValues": null
+    },
+    {
+      "to": "<ROUTER_ADDRESS>",
+      "value": "0",
+      "data": "0x1f211405",
+      "contractMethod": null,
+      "contractInputsValues": null
+    }
+  ]
+}
+```
+
+Both txs target the Router; batching makes the transition atomic from the signers' perspective.
+
+### Verification
+
+```bash
+cast call <ROUTER_ADDRESS> "executor()(address)" --rpc-url $RPC_URL
+# Must equal <EXECUTION_PROXY_ADDRESS>; until then the Router reverts on every swap.
 ```
 
 ## Post-Deployment Verification
@@ -178,10 +262,11 @@ forge script script/Verify.s.sol:VerifyDeployment \
 
 ### Manual Checklist
 
-- [ ] All 6 contracts have code at expected addresses
-- [ ] ExecutionProxy owner is Safe address (mainnet) or deployer (testnet)
+- [ ] All 7 contracts have code at expected addresses (Router, ExecutionProxy, Tupler, Integer, Bytes32, BlockchainInfo, ArraysConverter)
+- [ ] Router `owner()` is the Safe address (mainnet) or deployer (testnet without `SAFE_ADDRESS`)
+- [ ] Router `executor()` equals the deployed ExecutionProxy address (see [post-deploy wiring](#post-deploy-wire-router--executionproxy))
 - [ ] Contracts verified on block explorers
-- [ ] `rescue()` function callable by owner only
+- [ ] `Router.pause()` / `unpause()` callable by owner only
 - [ ] Test execution via API succeeds
 
 ### Safe Configuration Verification
@@ -216,7 +301,7 @@ forge script script/Verify.s.sol:VerifyDeployment \
 2. Add new contracts to the `contracts` array if needed:
 ```json
 {
-  "contracts": ["ExecutionProxy", "Tupler", "Integer", "Bytes32", "BlockchainInfo", "ArraysConverter"]
+  "contracts": ["ExecutionProxy", "Router", "Tupler", "Integer", "Bytes32", "BlockchainInfo", "ArraysConverter"]
 }
 ```
 
