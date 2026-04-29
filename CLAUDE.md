@@ -33,7 +33,7 @@ Uses CREATE3 for deterministic cross-chain addresses. Factory: `0x9fBB3DF7C40Da2
 ./deploy.sh list-chains           # Show supported chains
 ```
 
-Supports hardware wallets (Trezor/Ledger) and private key signing. Config via `.env` (see `.env.example`). Key env vars: `WALLET_TYPE`, `DEPLOYER_ADDRESS`, `SAFE_ADDRESS`, `<CHAIN>_RPC_URL`.
+Signs with a Foundry-encrypted keystore (`~/.foundry/keystores/<name>`). Create one via `./setup-deployer-wallet.sh <name>`. Config via `.env` (see `.env.example`). Key env vars: `KEYSTORE_ACCOUNT`, `DEPLOYER_ADDRESS`, `SAFE_ADDRESS`, `ROUTER_LIQUIDATOR`, `<CHAIN>_RPC_URL`.
 
 Supported chains: Ethereum (1), Base (8453), Sepolia (11155111), Base Sepolia (84532).
 

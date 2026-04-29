@@ -61,7 +61,7 @@ Script now `revert`s on any failure so `./deploy.sh verify <chainid>` exits non-
 ### 4. Configure production `.env` — TODO (operator)
 
 Use `.env.example` as the template. Required for deploy:
-- `WALLET_TYPE` (private-key / Trezor / Ledger), `DEPLOYER_ADDRESS`
+- `KEYSTORE_ACCOUNT` (Foundry encrypted keystore name; create via `./setup-deployer-wallet.sh`), `DEPLOYER_ADDRESS`
 - `ROUTER_OWNER` (Safe multisig per chain — different per chain or shared via cross-chain Safe)
 - `ROUTER_LIQUIDATOR`
 - `ETH_RPC_URL`, `BASE_RPC_URL`, `SEPOLIA_RPC_URL`, `BASE_SEPOLIA_RPC_URL`
