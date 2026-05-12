@@ -313,11 +313,7 @@ contract ExecutionProxyTest is Test {
 
         bytes4 selector = bytes4(keccak256("record(uint256,uint256,uint256,uint256,uint256,uint256,uint256)"));
         (bytes32 word1, bytes32 word2) = WeirollTestHelper.encodeExtendedCommand(
-            selector,
-            WeirollTestHelper.FLAG_CT_CALL,
-            argSlots,
-            WeirollTestHelper.IDX_END_OF_ARGS,
-            address(target)
+            selector, WeirollTestHelper.FLAG_CT_CALL, argSlots, WeirollTestHelper.IDX_END_OF_ARGS, address(target)
         );
         bytes32[] memory commands = new bytes32[](2);
         commands[0] = word1;
@@ -348,11 +344,7 @@ contract ExecutionProxyTest is Test {
 
         bytes4 selector = bytes4(keccak256("record(uint256,uint256,uint256,uint256,uint256,uint256,uint256)"));
         (bytes32 word1, bytes32 word2) = WeirollTestHelper.encodeExtendedCommand(
-            selector,
-            WeirollTestHelper.FLAG_CT_CALL,
-            argSlots,
-            WeirollTestHelper.IDX_END_OF_ARGS,
-            address(target)
+            selector, WeirollTestHelper.FLAG_CT_CALL, argSlots, WeirollTestHelper.IDX_END_OF_ARGS, address(target)
         );
         bytes32[] memory commands = new bytes32[](2);
         commands[0] = word1;

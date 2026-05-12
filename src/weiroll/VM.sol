@@ -4,7 +4,6 @@ pragma solidity ^0.8.11;
 
 import "./CommandBuilder.sol";
 
-
 abstract contract VM {
     using CommandBuilder for bytes[];
 
@@ -20,19 +19,13 @@ abstract contract VM {
 
     address immutable self;
 
-    error ExecutionFailed(
-        uint256 command_index,
-        address target,
-        string message
-    );
+    error ExecutionFailed(uint256 command_index, address target, string message);
 
     constructor() {
         self = address(this);
     }
 
-    function _execute(bytes32[] calldata commands, bytes[] memory state)
-      internal returns (bytes[] memory)
-    {
+    function _execute(bytes32[] calldata commands, bytes[] memory state) internal returns (bytes[] memory) {
         bytes32 command;
         uint256 flags;
         bytes32 indices;
@@ -49,30 +42,34 @@ abstract contract VM {
                 // Pre-increment so we read Word 2 (the 32-byte slot-indices array),
                 // not Word 1 again. The trailing `++i` at the bottom of the loop
                 // then advances past Word 2 to the next command.
-                unchecked { ++i; }
+                unchecked {
+                    ++i;
+                }
                 indices = commands[i];
             } else {
                 indices = bytes32(uint256(command << 40) | SHORT_COMMAND_FILL);
             }
 
             if (flags & FLAG_CT_MASK == FLAG_CT_CALL) {
-                (success, outdata) = address(uint160(uint256(command))).call( // target
-                    // inputs
-                    state.buildInputs(
-                        //selector
-                        bytes4(command),
-                        indices
-                    )
-                );
+                (success, outdata) = address(uint160(uint256(command)))
+                    .call( // target
+                        // inputs
+                        state.buildInputs(
+                            //selector
+                            bytes4(command),
+                            indices
+                        )
+                    );
             } else if (flags & FLAG_CT_MASK == FLAG_CT_STATICCALL) {
-                (success, outdata) = address(uint160(uint256(command))).staticcall( // target
-                    // inputs
-                    state.buildInputs(
-                        //selector
-                        bytes4(command),
-                        indices
-                    )
-                );
+                (success, outdata) = address(uint160(uint256(command)))
+                    .staticcall( // target
+                        // inputs
+                        state.buildInputs(
+                            //selector
+                            bytes4(command),
+                            indices
+                        )
+                    );
             } else if (flags & FLAG_CT_MASK == FLAG_CT_VALUECALL) {
                 uint256 calleth;
                 bytes memory v = state[uint8(bytes1(indices))];
@@ -80,10 +77,10 @@ abstract contract VM {
                 assembly {
                     calleth := mload(add(v, 0x20))
                 }
-                (success, outdata) = address(uint160(uint256(command))).call{ // target
+                (success, outdata) = address(uint160(uint256(command)))
+                .call{ // target
                     value: calleth
-                }(
-                    // inputs
+                }( // inputs
                     state.buildInputs(
                         //selector
                         bytes4(command),
@@ -112,7 +109,9 @@ abstract contract VM {
             } else {
                 state = state.writeOutputs(bytes1(command << 88), outdata);
             }
-            unchecked{++i;}
+            unchecked {
+                ++i;
+            }
         }
         return state;
     }

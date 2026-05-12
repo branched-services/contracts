@@ -90,9 +90,7 @@ library WeirollTestHelper {
         address target
     ) internal pure returns (bytes32 word1, bytes32 word2) {
         require(argSlots.length <= 32, "WeirollTestHelper: too many args");
-        word1 = encodeCommand(
-            selector, flags | FLAG_EXTENDED_COMMAND, bytes6(0xffffffffffff), outputIndex, target
-        );
+        word1 = encodeCommand(selector, flags | FLAG_EXTENDED_COMMAND, bytes6(0xffffffffffff), outputIndex, target);
         uint256 packed;
         for (uint256 i = 0; i < 32; i++) {
             uint8 slot = i < argSlots.length ? argSlots[i] : IDX_END_OF_ARGS;
