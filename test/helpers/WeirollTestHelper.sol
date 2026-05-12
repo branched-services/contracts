@@ -5,16 +5,22 @@ pragma solidity ^0.8.24;
 /// @notice Library to build Weiroll commands and state arrays for testing
 /// @dev Weiroll command format (bytes32):
 ///      - bytes 0-3: function selector (4 bytes)
-///      - byte 4: flags (call type in bits 0-1, extended command at bit 7, tuple return at bit 6)
+///      - byte 4: flags (call type in bits 0-1, extended command at bit 6, tuple return at bit 7)
 ///      - bytes 5-10: input indices (6 bytes, each byte is state index, 0xff = end of args)
 ///      - byte 11: output index (where to store return value, 0xff = discard)
 ///      - bytes 12-31: target address (20 bytes)
 library WeirollTestHelper {
-    // Call type flags (lower 2 bits of flags byte)
+    // Call type flags (lower 2 bits of flags byte). FLAG_CT_DELEGATECALL is declared
+    // for completeness; the VM dispatcher has no DELEGATECALL branch, so any command
+    // emitting it reverts with "Invalid calltype".
     uint8 internal constant FLAG_CT_DELEGATECALL = 0x00;
     uint8 internal constant FLAG_CT_CALL = 0x01;
     uint8 internal constant FLAG_CT_STATICCALL = 0x02;
     uint8 internal constant FLAG_CT_VALUECALL = 0x03;
+
+    // Upper flag bits.
+    uint8 internal constant FLAG_EXTENDED_COMMAND = 0x40;
+    uint8 internal constant FLAG_TUPLE_RETURN = 0x80;
 
     // Special indices
     uint8 internal constant IDX_END_OF_ARGS = 0xff;
@@ -69,6 +75,30 @@ library WeirollTestHelper {
         return bytes6(
             uint48(arg0) << 40 | uint48(arg1) << 32 | uint48(arg2) << 24 | uint48(arg3) << 16 | uint48(arg4) << 8 | 0xff
         );
+    }
+
+    /// @notice Build an extended Weiroll command (2 words) for calls with 7-32 arguments.
+    /// @dev Returns Word 1 and Word 2. The caller appends both to the commands array in
+    ///      order: the VM reads Word 1, observes FLAG_EXTENDED_COMMAND, advances by one,
+    ///      and reads Word 2 as the 32-byte slot-indices array. Word 1's own indices
+    ///      (bytes 5-10) are unused and filled with 0xff.
+    function encodeExtendedCommand(
+        bytes4 selector,
+        uint8 flags,
+        uint8[] memory argSlots,
+        uint8 outputIndex,
+        address target
+    ) internal pure returns (bytes32 word1, bytes32 word2) {
+        require(argSlots.length <= 32, "WeirollTestHelper: too many args");
+        word1 = encodeCommand(
+            selector, flags | FLAG_EXTENDED_COMMAND, bytes6(0xffffffffffff), outputIndex, target
+        );
+        uint256 packed;
+        for (uint256 i = 0; i < 32; i++) {
+            uint8 slot = i < argSlots.length ? argSlots[i] : IDX_END_OF_ARGS;
+            packed |= uint256(slot) << ((31 - i) * 8);
+        }
+        word2 = bytes32(packed);
     }
 
     /// @notice Build a Weiroll CALL command with no arguments, discarding return

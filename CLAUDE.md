@@ -41,7 +41,7 @@ Supported chains: Ethereum (1), Base (8453), Sepolia (11155111), Base Sepolia (8
 
 - **Solidity 0.8.24**, optimizer at 200 runs
 - **Dependencies** managed via Soldeer (stored in `dependencies/`)
-- **Import remappings**: `forge-std/`, `@openzeppelin/contracts/`, `@weiroll/`, `solmate/`
+- **Import remappings**: `forge-std/`, `@openzeppelin/contracts/`, `solmate/`. Weiroll VM + CommandBuilder live in-tree under `src/weiroll/` rather than as an external dependency.
 
 ### Core Contract
 

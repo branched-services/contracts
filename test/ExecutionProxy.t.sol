@@ -56,6 +56,23 @@ contract MockERC20 {
     }
 }
 
+/// @title MockSevenArg
+/// @notice Minimal target with a 7-argument function. Exercises the Weiroll VM's
+///         extended-command path (>6 args).
+contract MockSevenArg {
+    uint256[7] public values;
+
+    function record(uint256 a, uint256 b, uint256 c, uint256 d, uint256 e, uint256 f, uint256 g) external {
+        values[0] = a;
+        values[1] = b;
+        values[2] = c;
+        values[3] = d;
+        values[4] = e;
+        values[5] = f;
+        values[6] = g;
+    }
+}
+
 /// @title MockWETH
 /// @notice Minimal WETH for testing
 contract MockWETH is MockERC20 {
@@ -272,6 +289,98 @@ contract ExecutionProxyTest is Test {
         proxy.executePath(commands, state);
 
         assertEq(tokenA.balanceOf(fuzzRecipient), balBefore + amount);
+    }
+
+    // ============================================================
+    // Extended commands (>6 args) and dispatcher contract
+    // ============================================================
+
+    /// @notice Calls a 7-argument function via the extended-command path. The pre-
+    ///         remediation VM panicked here with `Panic(0x32)` because the decoder
+    ///         used a post-increment that re-read Word 1 instead of Word 2.
+    function test_ExecutePath_SevenArgs_Succeeds() public {
+        MockSevenArg target = new MockSevenArg();
+
+        bytes[] memory state = new bytes[](7);
+        for (uint256 i = 0; i < 7; i++) {
+            state[i] = abi.encode((i + 1) * 100);
+        }
+
+        uint8[] memory argSlots = new uint8[](7);
+        for (uint8 i = 0; i < 7; i++) {
+            argSlots[i] = i;
+        }
+
+        bytes4 selector = bytes4(keccak256("record(uint256,uint256,uint256,uint256,uint256,uint256,uint256)"));
+        (bytes32 word1, bytes32 word2) = WeirollTestHelper.encodeExtendedCommand(
+            selector,
+            WeirollTestHelper.FLAG_CT_CALL,
+            argSlots,
+            WeirollTestHelper.IDX_END_OF_ARGS,
+            address(target)
+        );
+        bytes32[] memory commands = new bytes32[](2);
+        commands[0] = word1;
+        commands[1] = word2;
+
+        proxy.executePath(commands, state);
+
+        for (uint256 i = 0; i < 7; i++) {
+            assertEq(target.values(i), (i + 1) * 100);
+        }
+    }
+
+    /// @notice Same extended-command path as above, but the outer tx carries
+    ///         msg.value. Proves the decoder is unaffected by parent call value
+    ///         and msg.value does not leak into the inner CALL (target is nonpayable).
+    function test_ExecutePath_SevenArgs_WithOuterValue() public {
+        MockSevenArg target = new MockSevenArg();
+
+        bytes[] memory state = new bytes[](7);
+        for (uint256 i = 0; i < 7; i++) {
+            state[i] = abi.encode((i + 1) * 100);
+        }
+
+        uint8[] memory argSlots = new uint8[](7);
+        for (uint8 i = 0; i < 7; i++) {
+            argSlots[i] = i;
+        }
+
+        bytes4 selector = bytes4(keccak256("record(uint256,uint256,uint256,uint256,uint256,uint256,uint256)"));
+        (bytes32 word1, bytes32 word2) = WeirollTestHelper.encodeExtendedCommand(
+            selector,
+            WeirollTestHelper.FLAG_CT_CALL,
+            argSlots,
+            WeirollTestHelper.IDX_END_OF_ARGS,
+            address(target)
+        );
+        bytes32[] memory commands = new bytes32[](2);
+        commands[0] = word1;
+        commands[1] = word2;
+
+        proxy.executePath{ value: 1 ether }(commands, state);
+
+        for (uint256 i = 0; i < 7; i++) {
+            assertEq(target.values(i), (i + 1) * 100);
+        }
+        assertEq(address(proxy).balance, 1 ether);
+    }
+
+    /// @notice The VM dispatcher has no DELEGATECALL branch. Any command emitting
+    ///         FLAG_CT_DELEGATECALL (0x00) falls through to `revert("Invalid calltype")`.
+    function test_ExecutePath_DelegateCall_Reverts() public {
+        bytes32[] memory commands = new bytes32[](1);
+        commands[0] = WeirollTestHelper.encodeCommand(
+            bytes4(0xdeadbeef),
+            WeirollTestHelper.FLAG_CT_DELEGATECALL,
+            WeirollTestHelper.indices0(),
+            WeirollTestHelper.IDX_END_OF_ARGS,
+            address(tokenA)
+        );
+        bytes[] memory state = new bytes[](0);
+
+        vm.expectRevert(abi.encodeWithSignature("Error(string)", "Invalid calltype"));
+        proxy.executePath(commands, state);
     }
 
     // ============================================================

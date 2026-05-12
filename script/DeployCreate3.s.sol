@@ -45,6 +45,12 @@ contract DeployCreate3 is Script {
     string public constant BLOCKCHAIN_INFO = "BlockchainInfo";
     string public constant ARRAYS_CONVERTER = "ArraysConverter";
 
+    // ExecutionProxy bytecode changed during the Weiroll VM remediation (extended-command
+    // decoder, dispatcher, and flag layout). Its salt is pinned to a namespace independent
+    // of `SALT_VERSION` so the fixed bytecode lands at a fresh CREATE3 address while
+    // Router and helper deployments stay on their existing v1 addresses.
+    string public constant EXECUTION_PROXY_SALT_NAMESPACE = "infrared.contracts.executionproxy.v2";
+
     // CREATE3 proxy bytecode hash (from solmate/ZeframLou CREATE3). Used to predict the deployed
     // address locally when no RPC is available (e.g. CI-less preview).
     bytes32 internal constant CREATE3_PROXY_BYTECODE_HASH = keccak256(hex"67363d3d37363d34f03d5260086018f3");
@@ -107,6 +113,13 @@ contract DeployCreate3 is Script {
         return keccak256(abi.encodePacked(prefix, contractName));
     }
 
+    /// @notice Pinned CREATE3 salt for ExecutionProxy.
+    /// @dev Independent of `SALT_VERSION` because the contract's bytecode changed
+    ///      during the Weiroll VM remediation and must land at a fresh address.
+    function getExecutionProxySalt() public pure returns (bytes32) {
+        return keccak256(bytes(EXECUTION_PROXY_SALT_NAMESPACE));
+    }
+
     /// @notice Predicts the deployment address for a contract
     /// @dev Uses the on-chain factory when available; otherwise reproduces the ZeframLou
     ///      CREATE3 math locally so `preview()` works without an RPC.
@@ -114,7 +127,15 @@ contract DeployCreate3 is Script {
     /// @param contractName The name of the contract
     /// @return The predicted deployment address
     function predictAddress(address deployer, string memory contractName) public view returns (address) {
-        bytes32 salt = getSalt(contractName);
+        return _predictForSalt(deployer, getSalt(contractName));
+    }
+
+    /// @notice Predicts the ExecutionProxy deployment address using its pinned salt.
+    function predictExecutionProxyAddress(address deployer) public view returns (address) {
+        return _predictForSalt(deployer, getExecutionProxySalt());
+    }
+
+    function _predictForSalt(address deployer, bytes32 salt) internal view returns (address) {
         if (isDeployed(CREATE3_FACTORY)) {
             return ICREATE3Factory(CREATE3_FACTORY).getDeployed(deployer, salt);
         }
@@ -199,7 +220,7 @@ contract DeployCreate3 is Script {
         // Deploy ExecutionProxy (pure-VM executor, no constructor args per FR-11).
         bytes memory executionProxyCode = type(ExecutionProxy).creationCode;
         (result.executionProxy, result.deployed[0]) =
-            deployIfNeeded(getSalt(EXECUTION_PROXY), executionProxyCode, EXECUTION_PROXY);
+            deployIfNeeded(getExecutionProxySalt(), executionProxyCode, EXECUTION_PROXY);
 
         // Deploy Router with (owner, liquidator) constructor args. Router holds user approvals
         // and the entire fee / slippage model; ExecutionProxy is forwarded funds + commands on each call.
@@ -274,7 +295,7 @@ contract DeployCreate3 is Script {
         console2.log("CREATE3 Factory:", CREATE3_FACTORY, factoryAvailable ? "(deployed)" : "(local-predict)");
         console2.log("");
 
-        address execProxy = predictAddress(deployer, EXECUTION_PROXY);
+        address execProxy = predictExecutionProxyAddress(deployer);
         console2.log("ExecutionProxy:", execProxy, isDeployed(execProxy) ? "(deployed)" : "(not deployed)");
 
         address router = predictAddress(deployer, ROUTER);

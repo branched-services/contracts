@@ -21,9 +21,3 @@ name = "solmate"
 version = "6.8.0"
 git = "https://github.com/transmissions11/solmate.git"
 rev = "eaa7041378f9a6c12f943de08a6c41b31a9870fc"
-
-[[dependencies]]
-name = "weiroll"
-version = "1.0.0"
-git = "https://github.com/weiroll/weiroll.git"
-rev = "afe6ba63c505bf9f2c630cd1c1dabad0de81c7e2"
