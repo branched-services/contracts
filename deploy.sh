@@ -59,11 +59,12 @@ usage() {
     echo "Usage: $0 <command> [options]"
     echo ""
     echo "Commands:"
-    echo "  deploy <chain-id>    Deploy contracts to specified chain"
-    echo "  dry-run <chain-id>   Simulate deployment without broadcasting"
-    echo "  preview <chain-id>   Preview deployment addresses without deploying"
-    echo "  verify <chain-id>    Verify deployed contracts on block explorer"
-    echo "  list-chains          List supported chains"
+    echo "  deploy <chain-id>      Deploy contracts to specified chain"
+    echo "  dry-run <chain-id>     Simulate deployment without broadcasting"
+    echo "  preview <chain-id>     Preview deployment addresses without deploying"
+    echo "  verify <chain-id>      Verify deployed contracts on block explorer"
+    echo "  wire-bundle <chain-id> Write Safe Tx Builder JSON for Router.executor wiring"
+    echo "  list-chains            List supported chains"
     echo ""
     echo "Environment Variables (auto-loaded from .env):"
     echo "  KEYSTORE_ACCOUNT     Foundry encrypted keystore account name (run ./setup-deployer-wallet.sh)"
@@ -178,8 +179,13 @@ generate_registry() {
         return 1
     fi
 
-    # Check if registry file exists
+    # Snapshot existing registry so contracts not created in THIS broadcast keep
+    # their historical txHash/blockNumber. Without this, a single-contract
+    # follow-up run (e.g. ExecutionProxy redeploy at a new salt) would clobber
+    # Router/helper provenance with the new tx's hash.
+    local prev_registry_json="{}"
     if [[ -f "$registry_file" ]]; then
+        prev_registry_json=$(cat "$registry_file")
         echo -e "${YELLOW}Warning: Overwriting existing deployments/$chain_id.json${NC}"
     fi
 
@@ -195,10 +201,15 @@ generate_registry() {
     local first=true
 
     while IFS= read -r contract; do
-        # Generate the salt for this contract (matches Solidity keccak256(abi.encodePacked(prefix, contractName)))
-        local salt_prefix="infrared.contracts.${salt_version}"
+        # ExecutionProxy uses a pinned namespace independent of SALT_VERSION;
+        # see DeployCreate3.s.sol EXECUTION_PROXY_SALT_NAMESPACE. Its bytecode
+        # changed (Weiroll VM fixes) and required a fresh CREATE3 address.
         local packed
-        packed=$(printf '%s%s' "$salt_prefix" "$contract")
+        if [[ "$contract" == "ExecutionProxy" ]]; then
+            packed="infrared.contracts.executionproxy.v2"
+        else
+            packed="infrared.contracts.${salt_version}${contract}"
+        fi
         local salt
         salt=$(cast keccak "$packed")
 
@@ -212,17 +223,25 @@ generate_registry() {
             continue
         fi
 
-        # Find tx hash and block from broadcast
+        # Match the contract against this broadcast's inner CREATE3 deploys
+        # (forge records them under transactions[].additionalContracts[]). If
+        # absent, the contract was already on-chain before this run — preserve
+        # the previous registry entry instead of stamping it with this run's tx.
         local tx_hash
-        tx_hash=$(jq -r --arg addr "${predicted_addr,,}" '.transactions[] | select(.contractAddress != null and (.contractAddress | ascii_downcase) == $addr) | .hash // empty' "$broadcast_file" | head -1)
+        tx_hash=$(jq -r --arg addr "${predicted_addr,,}" '
+            .transactions[]? as $tx
+            | ($tx.additionalContracts // [])[]
+            | select(.address != null and (.address | ascii_downcase) == $addr)
+            | $tx.hash // empty' "$broadcast_file" | head -1)
 
-        # If not found directly, look for transactions to the factory
-        if [[ -z "$tx_hash" ]]; then
-            tx_hash=$(jq -r '.transactions[0].hash // empty' "$broadcast_file")
+        local block_number=""
+        if [[ -n "$tx_hash" ]]; then
+            block_number=$(jq -r --arg hash "$tx_hash" '.receipts[]? | select(.transactionHash == $hash) | .blockNumber // empty' "$broadcast_file" | head -1)
+        else
+            # Not deployed in this run — preserve prior provenance.
+            tx_hash=$(printf '%s' "$prev_registry_json" | jq -r --arg c "$contract" '.contracts[$c].txHash // empty')
+            block_number=$(printf '%s' "$prev_registry_json" | jq -r --arg c "$contract" '.contracts[$c].blockNumber // empty')
         fi
-
-        local block_number
-        block_number=$(jq -r --arg hash "$tx_hash" '.receipts[] | select(.transactionHash == $hash) | .blockNumber // empty' "$broadcast_file" | head -1)
 
         # Convert hex block number to decimal if needed
         if [[ "$block_number" =~ ^0x ]]; then
@@ -336,6 +355,14 @@ deploy() {
 
     generate_registry "$chain_id" "$DEPLOYER_ADDRESS" "$rpc_url"
 
+    # Auto-generate the Safe Tx Builder bundle for the Router.executor wiring
+    # follow-up. Skipped when there's no Safe (testnet EOA-owner case) — the
+    # deployer can broadcast the two txs directly without going through a Safe.
+    if [[ -n "${SAFE_ADDRESS:-}" ]]; then
+        echo ""
+        wire_bundle "$chain_id"
+    fi
+
     echo ""
     echo "Next steps:"
     echo "  1. Run '$0 verify $chain_id' to verify contracts on block explorer"
@@ -349,6 +376,9 @@ deploy() {
         echo "  Router owner ($ROUTER_OWNER) must send two txs from the multisig on $display_name:"
         echo "    1) router.setPendingExecutor(executionProxy)"
         echo "    2) router.acceptExecutor()"
+        if [[ -n "${SAFE_ADDRESS:-}" ]]; then
+            echo "  Bundle written to tmp/wire-executor-$chain_name.json (Safe Tx Builder import)."
+        fi
     fi
 }
 
@@ -527,6 +557,94 @@ verify() {
     echo -e "${GREEN}Verification complete!${NC}"
 }
 
+# Write a Safe Tx Builder JSON bundle for the Router.executor wiring follow-up:
+#   1) router.setPendingExecutor(executionProxy)
+#   2) router.acceptExecutor()
+# Reads addresses from deployments/<chainId>.json (must exist) and SAFE_ADDRESS
+# from env. Bundle lands in tmp/wire-executor-<slug>.json and is meant to be
+# imported into the Safe app's Transaction Builder.
+wire_bundle() {
+    local chain_id="$1"
+
+    local chain_name display_name
+    chain_name=$(get_chain_config "$chain_id" "name")
+    if [[ -z "$chain_name" ]]; then
+        echo -e "${RED}Error: Chain ID $chain_id not found in chains.json${NC}"
+        list_chains
+        exit 1
+    fi
+    display_name=$(get_chain_config "$chain_id" "displayName")
+
+    local registry_file="$DEPLOYMENTS_DIR/$chain_id.json"
+    if [[ ! -f "$registry_file" ]]; then
+        echo -e "${RED}Error: $registry_file not found. Run '$0 deploy $chain_id' first.${NC}"
+        exit 1
+    fi
+
+    local router_addr executor_addr
+    router_addr=$(jq -r '.contracts.Router.address // empty' "$registry_file")
+    executor_addr=$(jq -r '.contracts.ExecutionProxy.address // empty' "$registry_file")
+    if [[ -z "$router_addr" || -z "$executor_addr" ]]; then
+        echo -e "${RED}Error: Router or ExecutionProxy address missing in $registry_file${NC}"
+        exit 1
+    fi
+
+    local safe_addr="${SAFE_ADDRESS:-}"
+    if [[ -z "$safe_addr" ]]; then
+        echo -e "${RED}Error: SAFE_ADDRESS not set (in .env or env)${NC}"
+        exit 1
+    fi
+
+    local set_pending_data accept_data
+    set_pending_data=$(cast calldata "setPendingExecutor(address)" "$executor_addr")
+    accept_data=$(cast calldata "acceptExecutor()")
+
+    local now_ms
+    now_ms=$(( $(date +%s) * 1000 ))
+
+    mkdir -p "$SCRIPT_DIR/tmp"
+    local out_file="$SCRIPT_DIR/tmp/wire-executor-$chain_name.json"
+
+    cat > "$out_file" << EOF
+{
+  "version": "1.0",
+  "chainId": "$chain_id",
+  "createdAt": $now_ms,
+  "meta": {
+    "name": "Wire Router executor ($display_name)",
+    "description": "setPendingExecutor + acceptExecutor for ExecutionProxy $executor_addr",
+    "txBuilderVersion": "1.16.5",
+    "createdFromSafeAddress": "$safe_addr",
+    "createdFromOwnerAddress": ""
+  },
+  "transactions": [
+    {
+      "to": "$router_addr",
+      "value": "0",
+      "data": "$set_pending_data",
+      "contractMethod": null,
+      "contractInputsValues": null
+    },
+    {
+      "to": "$router_addr",
+      "value": "0",
+      "data": "$accept_data",
+      "contractMethod": null,
+      "contractInputsValues": null
+    }
+  ]
+}
+EOF
+
+    echo -e "${GREEN}Wrote $out_file${NC}"
+    echo "  Router:         $router_addr"
+    echo "  ExecutionProxy: $executor_addr"
+    echo "  Safe:           $safe_addr"
+    echo ""
+    echo "Import this JSON into the Safe app:"
+    echo "  app.safe.global -> Apps -> Transaction Builder -> 'Load' (upload JSON)"
+}
+
 # Main
 if [[ $# -lt 1 ]]; then
     usage
@@ -548,6 +666,10 @@ case "$1" in
     verify)
         [[ $# -lt 2 ]] && usage
         verify "$2"
+        ;;
+    wire-bundle)
+        [[ $# -lt 2 ]] && usage
+        wire_bundle "$2"
         ;;
     list-chains)
         list_chains
