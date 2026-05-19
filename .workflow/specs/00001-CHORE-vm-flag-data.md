@@ -33,7 +33,7 @@ Without `FLAG_DATA`, every value-bearing call goes through `state.buildInputs(by
 
 - descry-side adoption of `FLAG_DATA` (e.g., `helpers.SendNativeEth` rewrite) -- follow-up.
 - Any other VM dispatcher change (DELEGATECALL reinstatement, alternative call types, flag bits beyond 0x20).
-- Router-side address bookkeeping. The Router contract (`0xED79938d…14B41`) is unaffected: it forwards into ExecutionProxy by address read from its constructor; the address bump is downstream of Router redeploy in any environment that uses it together. (No pinned consumers exist today, so this is a forward-only concern.)
+- Router-side `executor` repointing. The Router contract (`0xED79938d…14B41`) stores `executor` as a writable storage variable with a propose/accept pattern (`Router.sol:180`, `:234`, `:244`), so flipping it to the new ExecutionProxy is a multisig action, not a redeploy. The on-chain repointing is required before FLAG_DATA recipes can execute via the Router on each chain. Tracked in Open Questions; not performed here.
 
 ## Requirements
 
@@ -214,7 +214,8 @@ Without `FLAG_DATA`, every value-bearing call goes through `state.buildInputs(by
 ## Open Questions
 
 - **descry adoption timing.** descry v0.1.0 needs FLAG_DATA reachable. This chore lands the dispatcher + encoder; descry-side adoption is the next task. If descry is released before the rotated ExecutionProxy address is broadcast on a given chain, descry-built recipes targeting receive-only contracts will revert on that chain. Surface in descry's release notes so the rollout is observed.
-- **Router compatibility on rotation.** The Router contract holds the ExecutionProxy address in immutable state (constructor injection). Bumping ExecutionProxy means existing Router deployments still forward to the old address. Out of scope here, but flag for the descry team so they know which Router address pairs with which ExecutionProxy.
+- **Router `executor` repoint.** Router stores `executor` as a writable storage variable, owner-settable via `proposeExecutor` + `acceptExecutor` (`Router.sol:234`, `:240`, `:244`). Until the owner runs that two-step on each chain, EOAs that call Router will still be routed to the old v2 ExecutionProxy at `0xEd06…dfbDe`, where FLAG_DATA recipes will revert with `Invalid calltype` (the v2 bytecode predates the new flag handling). Action item: queue a Safe transaction per chain pointing to the new ExecutionProxy `0x1868…55AB`.
+- **Downstream consumer address pinning.** Several off-chain repos hard-code the v2 ExecutionProxy: `combine-prometheus/infrared/internal/protocol/infrared/addresses.go`, `descry/internal/fixtures/addresses.go`, `descry/abi/known/cross_chain_singletons.go`, the descry README/CLAUDE doc, and assorted descry test fixtures. Each is being updated in its own repo's commit; the historical evidence file at `combine-prometheus/infrared/evidence/testnet-api-e2e-swap-2026-04-30.md` is left alone because it documents a point-in-time test.
 - **CREATE3 idempotency surprise.** Confirm via `./deploy.sh preview` on every chain that the predicted v3 address really is same-on-all-chains (the factory is consistent at `0x9fBB3DF7…`, but a forked chain or one with a different factory deployment would silently diverge). Captured as the verification gate in FR-6.
 
 ## Next Steps
