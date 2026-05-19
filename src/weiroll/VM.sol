@@ -12,6 +12,7 @@ abstract contract VM {
     uint256 constant FLAG_CT_STATICCALL = 0x02;
     uint256 constant FLAG_CT_VALUECALL = 0x03;
     uint256 constant FLAG_CT_MASK = 0x03;
+    uint256 constant FLAG_DATA = 0x20;
     uint256 constant FLAG_EXTENDED_COMMAND = 0x40;
     uint256 constant FLAG_TUPLE_RETURN = 0x80;
 
@@ -77,16 +78,19 @@ abstract contract VM {
                 assembly {
                     calleth := mload(add(v, 0x20))
                 }
-                (success, outdata) = address(uint160(uint256(command)))
-                .call{ // target
-                    value: calleth
-                }( // inputs
-                    state.buildInputs(
+                bytes memory callData;
+                if (flags & FLAG_DATA != 0) {
+                    // Raw calldata taken verbatim from state slot. Selector in `command`
+                    // is ignored. Empty bytes -> zero-byte call (invokes receive()).
+                    callData = state[uint8(bytes1(indices << 8)) & CommandBuilder.IDX_VALUE_MASK];
+                } else {
+                    callData = state.buildInputs(
                         //selector
                         bytes4(command),
                         bytes32(uint256(indices << 8) | CommandBuilder.IDX_END_OF_ARGS)
-                    )
-                );
+                    );
+                }
+                (success, outdata) = address(uint160(uint256(command))).call{ value: calleth }(callData);
             } else {
                 revert("Invalid calltype");
             }

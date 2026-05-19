@@ -5,6 +5,7 @@ import { Test } from "forge-std/Test.sol";
 import { ExecutionProxy } from "../src/ExecutionProxy.sol";
 import { WeirollTestHelper } from "./helpers/WeirollTestHelper.sol";
 import { MockDEX } from "./mocks/MockDEX.sol";
+import { ReceiveOnlyTarget } from "./mocks/ReceiveOnlyTarget.sol";
 
 /// @title MockERC20
 /// @notice Minimal ERC20 for testing
@@ -95,6 +96,33 @@ contract MockWETH is MockERC20 {
     receive() external payable {
         balanceOf[msg.sender] += msg.value;
         totalSupply += msg.value;
+    }
+}
+
+/// @title PayloadEchoTarget
+/// @notice Captures the raw calldata it receives. Used by the FLAG_DATA suite to prove
+///         that the dispatcher forwards arbitrary bytes verbatim. fallback() fires for
+///         any payload whose first 4 bytes do not match a defined selector (which is
+///         the case for our synthetic FLAG_DATA payloads).
+contract PayloadEchoTarget {
+    bytes public lastPayload;
+    uint256 public callCount;
+    uint256 public totalReceived;
+
+    fallback() external payable {
+        lastPayload = msg.data;
+        unchecked {
+            callCount += 1;
+            totalReceived += msg.value;
+        }
+    }
+
+    receive() external payable {
+        lastPayload = "";
+        unchecked {
+            callCount += 1;
+            totalReceived += msg.value;
+        }
     }
 }
 
@@ -373,6 +401,104 @@ contract ExecutionProxyTest is Test {
 
         vm.expectRevert(abi.encodeWithSignature("Error(string)", "Invalid calltype"));
         proxy.executePath(commands, state);
+    }
+
+    // ============================================================
+    // FLAG_DATA: raw-calldata VALUECALL
+    // ============================================================
+
+    /// @notice Empty bytes in the calldata slot -> zero-byte call -> invokes receive().
+    ///         This is the path that unblocks helpers like descry's SendNativeEth, which
+    ///         needs to forward ETH to targets that have receive() but no payable
+    ///         fallback().
+    function test_FlagData_EmptyCalldata_TriggersReceive() public {
+        ReceiveOnlyTarget target = new ReceiveOnlyTarget();
+        uint256 value = 0.1 ether;
+
+        bytes[] memory state = WeirollTestHelper.createState2(WeirollTestHelper.encodeUint256(value), bytes(""));
+        bytes32[] memory commands = new bytes32[](1);
+        commands[0] = WeirollTestHelper.buildValueCallWithRawData(address(target), 0, 1);
+
+        proxy.executePath{ value: value }(commands, state);
+
+        assertEq(target.calls(), 1);
+        assertEq(target.totalReceived(), value);
+        assertEq(address(target).balance, value);
+    }
+
+    /// @notice Non-empty calldata slot passes through to the target verbatim. The
+    ///         dispatcher does not prepend a selector, splice in args, or otherwise
+    ///         transform the bytes.
+    function test_FlagData_ArbitraryCalldata_PassesVerbatim() public {
+        PayloadEchoTarget target = new PayloadEchoTarget();
+        bytes memory payload = hex"deadbeefcafebabe";
+
+        bytes[] memory state = WeirollTestHelper.createState2(WeirollTestHelper.encodeUint256(0), payload);
+        bytes32[] memory commands = new bytes32[](1);
+        commands[0] = WeirollTestHelper.buildValueCallWithRawData(address(target), 0, 1);
+
+        proxy.executePath(commands, state);
+
+        assertEq(target.callCount(), 1);
+        assertEq(target.totalReceived(), 0);
+        assertEq(target.lastPayload(), payload);
+    }
+
+    /// @notice Zero ETH value with empty calldata is a valid combination: receive()
+    ///         runs with msg.value == 0. Useful as a "no-op ping" or as a building
+    ///         block where the value happens to be zero at runtime.
+    function test_FlagData_ZeroValue_Succeeds() public {
+        ReceiveOnlyTarget target = new ReceiveOnlyTarget();
+        uint256 balanceBefore = address(target).balance;
+
+        bytes[] memory state = WeirollTestHelper.createState2(WeirollTestHelper.encodeUint256(0), bytes(""));
+        bytes32[] memory commands = new bytes32[](1);
+        commands[0] = WeirollTestHelper.buildValueCallWithRawData(address(target), 0, 1);
+
+        proxy.executePath(commands, state);
+
+        assertEq(target.calls(), 1);
+        assertEq(target.totalReceived(), 0);
+        assertEq(address(target).balance, balanceBefore);
+    }
+
+    /// @notice Plain VALUECALL (no FLAG_DATA) still goes through buildInputs and lands
+    ///         exactly as before. Sanity check that the dispatcher split did not
+    ///         regress the legacy path.
+    function test_FlagData_BackwardsCompat_VALUECALL_Unchanged() public {
+        uint256 amount = 1 ether;
+
+        bytes[] memory state = WeirollTestHelper.createState1(WeirollTestHelper.encodeUint256(amount));
+        bytes32[] memory commands = new bytes32[](1);
+        commands[0] = WeirollTestHelper.buildWethDepositCommand(address(weth), 0);
+
+        proxy.executePath{ value: amount }(commands, state);
+
+        assertEq(weth.balanceOf(address(proxy)), amount);
+        assertEq(address(proxy).balance, 0);
+    }
+
+    /// @notice FLAG_DATA on a non-VALUECALL call type is ignored. The dispatcher
+    ///         checks FLAG_CT_MASK first; FLAG_CT_CALL never reaches the FLAG_DATA
+    ///         branch. A mint command with FLAG_DATA spuriously set still mints.
+    function test_FlagData_NonVALUECALL_FlagIgnored() public {
+        uint256 amount = 1000e18;
+
+        bytes[] memory state = WeirollTestHelper.createState2(
+            WeirollTestHelper.encodeAddress(recipient), WeirollTestHelper.encodeUint256(amount)
+        );
+        bytes32[] memory commands = new bytes32[](1);
+        commands[0] = WeirollTestHelper.encodeCommand(
+            bytes4(0x40c10f19), // mint(address,uint256)
+            WeirollTestHelper.FLAG_CT_CALL | WeirollTestHelper.FLAG_DATA,
+            WeirollTestHelper.indices2(0, 1),
+            WeirollTestHelper.IDX_END_OF_ARGS,
+            address(tokenA)
+        );
+
+        proxy.executePath(commands, state);
+
+        assertEq(tokenA.balanceOf(recipient), amount);
     }
 
     // ============================================================

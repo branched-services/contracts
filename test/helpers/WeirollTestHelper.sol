@@ -19,6 +19,7 @@ library WeirollTestHelper {
     uint8 internal constant FLAG_CT_VALUECALL = 0x03;
 
     // Upper flag bits.
+    uint8 internal constant FLAG_DATA = 0x20;
     uint8 internal constant FLAG_EXTENDED_COMMAND = 0x40;
     uint8 internal constant FLAG_TUPLE_RETURN = 0x80;
 
@@ -145,6 +146,17 @@ library WeirollTestHelper {
     /// @dev For VALUECALL, first index is the ETH value, remaining are function args
     function buildValueCallNoArgs(address target, bytes4 selector, uint8 valueIdx) internal pure returns (bytes32) {
         return encodeCommand(selector, FLAG_CT_VALUECALL, indices1(valueIdx), IDX_END_OF_ARGS, target);
+    }
+
+    /// @notice Build a VALUECALL command that takes its calldata verbatim from `dataIdx`.
+    /// @dev Sets FLAG_DATA. The dispatcher ignores `selector` and reads
+    ///      `state[dataIdx]` as the entire calldata payload. Empty bytes -> zero-byte
+    ///      call (invokes the target's receive()).
+    function buildValueCallWithRawData(address target, uint8 valueIdx, uint8 dataIdx) internal pure returns (bytes32) {
+        return
+            encodeCommand(
+                bytes4(0), FLAG_CT_VALUECALL | FLAG_DATA, indices2(valueIdx, dataIdx), IDX_END_OF_ARGS, target
+            );
     }
 
     /// @notice Build a Weiroll STATICCALL command with one argument, storing return

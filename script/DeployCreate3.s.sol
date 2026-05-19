@@ -45,11 +45,13 @@ contract DeployCreate3 is Script {
     string public constant BLOCKCHAIN_INFO = "BlockchainInfo";
     string public constant ARRAYS_CONVERTER = "ArraysConverter";
 
-    // ExecutionProxy bytecode changed during the Weiroll VM remediation (extended-command
-    // decoder, dispatcher, and flag layout). Its salt is pinned to a namespace independent
-    // of `SALT_VERSION` so the fixed bytecode lands at a fresh CREATE3 address while
-    // Router and helper deployments stay on their existing v1 addresses.
-    string public constant EXECUTION_PROXY_SALT_NAMESPACE = "infrared.contracts.executionproxy.v2";
+    // ExecutionProxy bytecode changes every time the Weiroll VM dispatcher does
+    // (extended-command decoder, dispatcher, flag layout, FLAG_DATA, etc.). Its
+    // salt is pinned to a namespace independent of `SALT_VERSION` so each fixed
+    // bytecode lands at a fresh CREATE3 address while Router and helper
+    // deployments stay on their existing v1 addresses. Current bump: .v2 -> .v3
+    // accompanies FLAG_DATA dispatcher support (spec 00001).
+    string public constant EXECUTION_PROXY_SALT_NAMESPACE = "infrared.contracts.executionproxy.v3";
 
     // CREATE3 proxy bytecode hash (from solmate/ZeframLou CREATE3). Used to predict the deployed
     // address locally when no RPC is available (e.g. CI-less preview).
